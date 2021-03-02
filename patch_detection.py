@@ -1,5 +1,5 @@
 '''
-Soter main
+Robin main
 '''
 
 import datetime
@@ -55,6 +55,7 @@ def set_logger_level(log_level):
     logging.getLogger("Memory_Access").setLevel(log_level)
     logging.getLogger("RuntimeRecorder").setLevel(log_level)
     logging.getLogger('preparation').setLevel(log_level)
+    logging.getLogger("CFGDiffer").setLevel(log_level)
 
 
 mute_angr()
@@ -1068,6 +1069,29 @@ def input_gen(cveid, patched_bin, func_name, check_addr, patch_addr, force_gener
     except Exception as e:
         l.error(traceback.format_exc())
 
+def generate_cve_sig(cveid, vul_bin, patched_bin, func_name, force_generation=False):
+    '''
+    PoC input Generation
+    With PoC input fed, execute function and record semantic information.
+    :param force_generation: ignore the cache file
+    :return :
+    '''
+    l.info(
+        "\n[*] Run for {},{},{},{}".format(cveid, vul_bin, patched_bin, func_name))
 
+    p_exe = SymExePath(CVEid=cveid, func_name=func_name)
+    patched_signature_saved_path = get_cve_patch_sig_file_path(cveid, func_name)
+    vul_signature_saved_path = get_cve_vul_sig_file_path(cveid, func_name)
+    try:
+
+        if force_generation or not os.path.exists(patched_signature_saved_path):
+            p_flag = p_exe.sig_gen(patched_bin,func_name, patched_signature_saved_path)
+        if force_generation or not os.path.exists(vul_signature_saved_path):
+            p_exe.sig_gen(vul_bin, func_name, vul_signature_saved_path)
+    except Exception as e:
+        l.error("[-] Generation Error: {},{},{},{}".format(cveid, vul_bin, patched_bin, func_name))
+        l.error(traceback.format_exc())
+        return False
+    return True
 if __name__ == '__main__':
     pass

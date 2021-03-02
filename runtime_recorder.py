@@ -1,11 +1,8 @@
 # encoding:utf-8
 '''
-@author: yangshouguo
-@date: 2020年11月10日 20:56:31
+@date: 20201110 20:56:31
 
-该类记录函数在给定 内存布局/输入 的情况下，运行路径中的一些信息
-包括对运行时进行空指针解引用的检测
-记录执行过程中的 算术指令，call指令信息
+This class detects NULL POINTER DEREFERENCE and records semantic informations during execution.
 '''
 
 import logging
@@ -21,7 +18,7 @@ l.setLevel(logging.DEBUG)
 
 class NullPointerDereference(angr.exploration_techniques.ExplorationTechnique):
     '''
-    在angr符号执行的过程中检测每条指令 记录需要的信息
+    It checks every single instruction.
     '''
     NULLPOINTER_STASH = "nullpointer"
     MULTIBRANCH = "mutilplebranch"
@@ -29,17 +26,17 @@ class NullPointerDereference(angr.exploration_techniques.ExplorationTechnique):
 
     def __init__(self, callees_and_rets, project, bound=30):
         '''
-        :param callees_and_rets: 在执行过程中遇到的函数调用序列和对应的返回值
+        :param callees_and_rets: a queue of callee returns
         :param project : angr project
         '''
         angr.exploration_techniques.ExplorationTechnique.__init__(self)
         self.callees_and_rets = callees_and_rets
-        self.FUNCTION_CALL_INSTRUCTION = {'X86': ['call'], 'AMD64': ['call']}  # 函数调用的助记符
+        self.FUNCTION_CALL_INSTRUCTION = {'X86': ['call'], 'AMD64': ['call']}  # the mnemonics of function calls
         self.dic_addr_func = {}
         self.p = project
-        self.ret_value = None  # 上次函数调用返回值的和函数调用的下一个基本块的地址
-        self._state_after_call = None  # 执行过程中feed给后继state的函数返回值。 如果基本块的函数调用的值已经求解得到。那么直接对其下一个基本块的state进行构建返回
-        self._multi_brach_flag = False  # 记录在符号执行过程中，是否有基本块存在多个分支。如果存在，则认定为检测失败
+        self.ret_value = None  # the return value of function call
+        self._state_after_call = None  # the state after function call
+        self._multi_brach_flag = False  # a flag denotes the program executing into multiple branch
 
         self._ARITHMETIC_INSTRUCTION = {"X86": ['add', 'inc', 'neg', 'sub', 'mul', 'div', 'dec'],
                                         "AMD64": ['add', 'inc', 'neg', 'sub', 'mul', 'div', 'dec'],
@@ -50,25 +47,26 @@ class NullPointerDereference(angr.exploration_techniques.ExplorationTechnique):
                                                    'test', 'add', "sub", 'inc', 'dec', 'mul', 'imul', 'push'],
                                          "ARM": []}  # ARM MIPS To support
         self._COMPARE_INSTRUCTION = {"X86": ['cmp', 'test'], "AMD64": ['cmp', 'test']}
-        self._arithmetic_sequence = []  # 记录执行路径中的算术指令，结果，是否是符号值 (ins, value, 1 or 0)
-        self._constants_in_cmp_instruction = []  # 记录比较指令中的常量
-        self._arguments = []  # 记录函数调用中的第一个参数
-        self._memory_unit_size = int(project.arch.bits / 8)  # 内存单元的字节数 32bit是4个字节
-        self._args_in_cmp_instruction = []  # 记录对函数参数的比较
+        self._arithmetic_sequence = []  # the arithmetic instructions during execution; (ins, value, 1 or 0)
+        self._constants_in_cmp_instruction = []  # the constants in CMP instruction.
+        self._arguments = []  # the first argument for function calls.
+        self._memory_unit_size = int(project.arch.bits / 8)  # the memory unit sizes
+        self._args_in_cmp_instruction = []  # the comparison of function arguments
         self._unsat = False
         self.bound = bound
         self._loop_detector = {}
 
     def setup(self, simgr):
         if self.NULLPOINTER_STASH not in simgr.stashes:
-            simgr.stashes[self.NULLPOINTER_STASH] = []  # 包含空指针异常的state会被放在这个stash
+            simgr.stashes[self.NULLPOINTER_STASH] = []  # the states where NULL POINTER DEREFERENCE ocurring
 
     def eval_addr(self, state, expression):
         '''
-        首先判断寄存器是不是符号值，不是符号值再进行求解！
+        First the registers are tested to be symbolic or not symbolic.
+        Then, the address of dereference is tested.
         :param state: angr state
         :param expression: e.g. rax+r8*2
-        :return: 返回表达式的字符串形式，例如 '0x19 + 100' 和寄存器的值
+        :return: The expression of instruction. e.g. '0x19 + 100'
         '''
         regs_pattern = "(?P<reg1>[er][a-z0-9]{1,4})"
         regs = re.finditer(regs_pattern, expression)
@@ -89,9 +87,10 @@ class NullPointerDereference(angr.exploration_techniques.ExplorationTechnique):
         :param simgr:
         :param state:
         :param kwargs:
-        :return: 如果函数调用返回值在 self.callees_and_rets, 则直接返回结果；否则进入被调用函数执行
+        :return: If the self.callee is not empty, pop a return value for function call.
+                Else, step into the function.
         '''
-        # 循环检测
+        # Loop detection
         if state.addr not in self._loop_detector:
             self._loop_detector[state.addr] = 0
         else:
@@ -100,7 +99,7 @@ class NullPointerDereference(angr.exploration_techniques.ExplorationTechnique):
                 l.debug("[!] Loop time reach limit {} in block {}".format(self.bound, hex(state.addr)))
                 stash = {None: []}
                 return stash
-        # 循环检测结束
+        # End
 
         l.debug("[>] step_state in block {}".format(hex(state.addr)))
         if self._state_after_call:
@@ -122,12 +121,12 @@ class NullPointerDereference(angr.exploration_techniques.ExplorationTechnique):
 
     def skip_function_call(self, state, ins, is_indirected=False):
         '''
-        :param state:  该state.block的以call 结尾
+        :param state:  A state ends with function call
         :param ins:   call instruction
-        :param is_indirected: 是否是间接调用: e.g. call eax;
-        :return: 如果函数调用记录在 self.callees_and_rets, 则直接根据函数返回值构造下一个state
+        :param is_indirected: e.g. call eax;
+        :return: If self.callees_and_rets is not empty, pop a value and construct a state after function call.
         '''
-        if len(self.callees_and_rets) <= 0:  # 从函数返回值序列按照顺序弹出返回值
+        if len(self.callees_and_rets) <= 0:  # pop a value
             return None
 
         name, retval = self.callees_and_rets.pop(0)
@@ -142,7 +141,7 @@ class NullPointerDereference(angr.exploration_techniques.ExplorationTechnique):
         nstate = state
         nstate.regs.ip = ins.address + ins.size
         nstate.regs.eax = retval
-        # 删除断点，防止重复输出内存访问记录
+        # delete breakpoints
         for bp in nstate.inspect._breakpoints['mem_write']:
             nstate.inspect.remove_breakpoint('mem_write', bp)
         for bp in nstate.inspect._breakpoints['mem_read']:
@@ -154,7 +153,7 @@ class NullPointerDereference(angr.exploration_techniques.ExplorationTechnique):
 
         def _record_arithmetic_inst(state, instruction):
             '''
-            记录算术指令 和 算术指令的结果 到 self._arithmetic_sequence
+            Record the mnemonics and calculation results of arithmetic instructions.
             inc eax ,  sub eax,2
             state.scratch.tmp_expr
             '''
@@ -162,7 +161,7 @@ class NullPointerDereference(angr.exploration_techniques.ExplorationTechnique):
             mnemonic = instruction.mnemonic
             op_str = instruction.op_str
 
-            # 过滤掉对栈指针进行操作的指令
+            # filter out the stack instructions
             for x in STACK_POINTER:
                 if x in op_str:
                     if instruction.operands[0].type == 1 and instruction.operands[1].type == 2:
@@ -173,14 +172,14 @@ class NullPointerDereference(angr.exploration_techniques.ExplorationTechnique):
 
         def _record_constant_in_cmp(state, instruction):
             '''
-            记录比较指令中的常量
+            record constants in CMP instruction
             :return:
             '''
             for x in instruction.operands:
-                if x.type == 2:  # 如果是常量
+                if x.type == 2:  #  If the operand is constant
                     self._constants_in_cmp_instruction.append(x.imm)
                 elif x.type == 1:  # register
-                    # 得到寄存器名字，然后求值。
+                    # eval the reg
                     name = instruction.reg_name(x.imm)
                     reg = state.registers.load(name)
                     if not reg.symbolic:
@@ -191,15 +190,15 @@ class NullPointerDereference(angr.exploration_techniques.ExplorationTechnique):
                             l.error("[!] eval for reg {} unsat in 0x{:x}".format(name, state.addr))
 
         def _record_cmp_about_argument(state, instruction):
-            '''TODO 记录比较的参数序号 和 比较类型
+            '''
             例如： cmp eax, arg1; jz addr=>  [1, ==]
-                   cmp arg1, arg3; jg => [1, >] ; 只记录对较小次序的参数
+                   cmp arg1, arg3; jg => [1, >] ;
             '''
             self._args_in_cmp_instruction = []
 
         def _record_call_first_argument(state, instruction):
             '''
-            记录函数调用中的第一个参数
+            Record the first argument for function call.
             :param state:
             :param instruction:
             :return:
@@ -213,13 +212,13 @@ class NullPointerDereference(angr.exploration_techniques.ExplorationTechnique):
 
         def _check_null_pointer_in_oprand(state, op_str, reg_threshold=min_mem_addr_npd):
             '''
-            :param state: 待检测的state
-            :param op_str: 指令操作数
-            :return: 如果有空指针解引用，返回True，否则返回False
+            :param state: the state to be detected
+            :param op_str: string format of operands
+            :return: If null pointer dereference happens return True, else return False.
             '''
             # regular expression to locate the [] content
             '''
-            排除 mov eax, dword ptr gs:[0x14] 这样的指令
+            :except mov eax, dword ptr gs:[0x14]
             '''
             oprands_str = op_str
             res = re.search("\[.*\]", oprands_str)
@@ -236,10 +235,10 @@ class NullPointerDereference(angr.exploration_techniques.ExplorationTechnique):
 
             memory_addr_tobe_derenferenced = eval(eval_str)
 
-            # 如果待解引用的地址很小，并且内存中对应地址的内容为符号值
+            # If the dereference memory address is very low.
             if memory_addr_tobe_derenferenced < reg_threshold and state.memory.load(
                     memory_addr_tobe_derenferenced, self._memory_unit_size).symbolic:
-                # 如果某一个寄存器的值是0，则认为是空指针解引用
+                #
                 for v in regs_value_list:
                     if v == 0:
                         return True
@@ -251,13 +250,13 @@ class NullPointerDereference(angr.exploration_techniques.ExplorationTechnique):
             1. traverse each instruction in the block of state, and find the null pointer dereference in oprands
             such as:
                 1."movzx   edx, word ptr [rax+rsi*2]"
-                计算 [] 中的结果!!!
+                calculate the value in []
 
             2. record features
             :return: True if null pointer dereference exists or false
             '''
             mem_read_write_monitor(state)
-            dereference_instruction_types = self._DEREFERENCE_INSTRUCTION[self.p.arch.name]  # 可能发生解引用的指令
+            dereference_instruction_types = self._DEREFERENCE_INSTRUCTION[self.p.arch.name]  # instructions that dereference memory
             arithmentic_instructions = self._ARITHMETIC_INSTRUCTION[self.p.arch.name]
             compare_instructions = self._COMPARE_INSTRUCTION[self.p.arch.name]
             function_call_mnemonic = self.FUNCTION_CALL_INSTRUCTION[self.p.arch.name]
@@ -274,25 +273,25 @@ class NullPointerDereference(angr.exploration_techniques.ExplorationTechnique):
                         '''
                         _record_call_first_argument(state, instruction)
                         if instruction.op_str.startswith('0x'):
-                            # memset 等库函数调用继续执行, 使用 Simprocedure
+                            # continue to execute lib functions such as memset  Simprocedure
                             func_name = self.addr_to_func_name(self.p, int(instruction.op_str, 16))
                             if func_name not in CALL_WHITE_LIST:
-                                '''生成函数调用返回之后的state'''
+                                '''state after function call'''
                                 self._state_after_call = self.skip_function_call(state, instruction)
                             continue
-                        else:  # 处理间接调用; 1. call    [ebp+arg_10] 2. call eax
-                            '''首先判断是否存在空指针解引用'''
+                        else:  # indirect function call; 1. call    [ebp+arg_10] 2. call eax
+                            ''''''
                             if _check_null_pointer_in_oprand(state, instruction.op_str):
                                 l.debug(
                                     "Null Pointer Dereference founded at instruction 0x{:x}: {}".format(state.addr,
                                                                                                         instruction))
                                 return True
-                            '''尝试构造函数调用返回值'''
+                            ''''''
                             call_instr = state.block().capstone.insns[0].insn
                             self._state_after_call = self.skip_function_call(state, call_instr, is_indirected=True)
                 else:
                     if _check_null_pointer_in_oprand(state, instruction.op_str):
-                        l.debug(
+                        l.warning(
                             "Null Pointer Dereference founded at instruction 0x{:x}: {}".format(state.addr,
                                                                                                 instruction))
                         return True
@@ -318,7 +317,7 @@ class NullPointerDereference(angr.exploration_techniques.ExplorationTechnique):
                     if len(successors) == 0:
                         if len(succ.unconstrained_successors) > 0 and \
                                 state.block().capstone.insns[-1].insn.mnemonic == 'call':
-                            # 间接函数调用; 当fake 的值用完之后.
+                            # indirect function call
                             self._state_after_call = self.skip_function_call(state,
                                                                              state.block().capstone.insns[-1].insn)
                             return False
@@ -333,9 +332,9 @@ class NullPointerDereference(angr.exploration_techniques.ExplorationTechnique):
                         l.warning("[*] Block {} has mutiple successors".format(hex(state.addr)))
                         self._multi_brach_flag = True
 
-                    state = successors[0]  # 执行一条指令, 因为在基本块内，所以肯定没有分支，只有一个successor
+                    state = successors[0]  # there will be just one successor since the instruction executed is in a block.
                     if not state.satisfiable():
-                        # 运行过程中产生unsat, 有可能是不同编译优化造成函数调用约定不同，参数设置失败
+                        #
                         self._unsat = True
                         return False
                 except Exception as e:
@@ -353,10 +352,10 @@ class NullPointerDereference(angr.exploration_techniques.ExplorationTechnique):
         if check_Null_pointer_dereference(state.copy()):
             return self.NULLPOINTER_STASH
 
-        # 出现多个分支，表示无法检测到漏洞,检测停止
+        # The detection stops if multiple branches.
         if self._multi_brach_flag:
             return self.MULTIBRANCH
-        # 不满足约束
+        # unsatisfiable.
         if self._unsat:
             return self.ABORT
 

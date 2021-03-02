@@ -20,7 +20,7 @@ import ida_auto
 
 def wait_for_analysis_to_finish():
     '''
-    等待ida将二进制文件分析完毕再执行其他操作
+    Waiting utils IDA finishes analysis
     :return:
     '''
     ida_auto.auto_wait()
@@ -64,8 +64,7 @@ class ExportCFG():
 
     def normalize_instruction(self, ea):
         '''
-        对指令中的寄存器，常量，内存进行正则化
-        保留cmp，test指令中的常量！！！
+        Normalize instruction
         '''
         inst_t = DecodeInstruction(ea)
         operands = inst_t.ops

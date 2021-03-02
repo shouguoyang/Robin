@@ -61,7 +61,7 @@
       <paths name="angr@10.10.2.250:2006">
         <serverdata>
           <mappings>
-            <mapping local="$PROJECT_DIR$" web="/" />
+            <mapping deploy="/home/angr/Soter" local="$PROJECT_DIR$" web="/" />
           </mappings>
         </serverdata>
       </paths>

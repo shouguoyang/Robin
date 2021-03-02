@@ -125,7 +125,7 @@ class CFG_PS():
         if check_node not in cfg.nodes:
             raise Exception("check node in not in cfg.nodes")
 
-        reacheable_blocks = []  # 记录可以到达补丁块的其他基本块的地址
+        reacheable_blocks = []  # record the blocks reaching to patch
         predecessor_queue = [check_node]
         while len(predecessor_queue) > 0:
             current_node = predecessor_queue.pop(0)

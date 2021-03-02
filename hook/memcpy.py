@@ -3,7 +3,6 @@
 -------------------------------------------------
    File Name：     memcpy
    Description :
-   Author :       ysg
    date：          2021/1/19
 -------------------------------------------------
    Change Activity:
@@ -12,7 +11,6 @@
 """
 from angr.sim_options import ABSTRACT_MEMORY
 
-__author__ = 'ysg'
 import angr
 import logging
 
