@@ -4,9 +4,9 @@
 |BinXray|84%|34%|31%|16%|
 |Robin(our tool)|88%|85%|82%|74%|
 
-We conduct the patch detection with signatures generated with optimization O2.
+We conduct the patch detection with signatures generated with optimization level O2.
 
-The first row denotes the optimization levels adopted when compiling the target software.
+The first row denotes the optimization levels adopted when compiling the detected target software.
 
 
 # Table 2. False Positive(FP) Rate of Different Tools
