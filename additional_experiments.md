@@ -4,6 +4,9 @@
 |BinXray|84%|34%|31%|16%|
 |Robin(our tool)|88%|85%|82%|74%|
 
+We conduct the patch detection with signatures generated with optimization O2.
+
+The first row denotes the optimization levels adopted when compiling the target software.
 
 
 # Table 2. False Positive(FP) Rate of Different Tools
@@ -11,3 +14,7 @@
 |-|-|-|-|
 |SAFE|82%|80%|66%|
 |Gemini|72%|69%|33%|
+
+The table shows the false postive rates in the function matching results.
+
+A false positive refers to a patched function being mistaken for a vulnerable function.
