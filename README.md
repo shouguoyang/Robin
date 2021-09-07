@@ -40,7 +40,7 @@ True
 
 see function `patch_test()` in `patch_test.py`
 
-```angular2
+```
 INFO    | 2021-03-02 14:22:16,301 | patch_detection | [*] start null pointer dereference detection for X509_to_X509_REQ of CVE-2015-0288 in /home/angr/Soter/binaries/openssl/O0/openssl-1.0.1k
 INFO    | 2021-03-02 14:22:16,468 | patch_detection | [*] preparing memory layout for detection >>>
 INFO    | 2021-03-02 14:22:17,318 | preparation | [*] calling convention detecting...

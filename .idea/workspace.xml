@@ -2,27 +2,8 @@
 <project version="4">
   <component name="ChangeListManager">
     <list default="true" id="7dbbbb83-3802-49d1-ba26-cb408fb7ff96" name="Default Changelist" comment="">
-      <change afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/binaries/openssl/O0/openssl-1.0.1k" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/binaries/openssl/O0/openssl-1.0.1l" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/binaries/openssl/O0/openssl-1.0.1m" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/data/cve_all" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/requirments.txt" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/Soter.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/Soter.iml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/deployment.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/deployment.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/misc.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/cfg_pruning_with_slice.py" beforeDir="false" afterPath="$PROJECT_DIR$/cfg_pruning_with_slice.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/hook/memcpy.py" beforeDir="false" afterPath="$PROJECT_DIR$/hook/memcpy.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/hook/memset.py" beforeDir="false" afterPath="$PROJECT_DIR$/hook/memset.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/important_VALUEs.py" beforeDir="false" afterPath="$PROJECT_DIR$/important_VALUEs.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/patch_detection.py" beforeDir="false" afterPath="$PROJECT_DIR$/patch_detection.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/patch_location/PatchLocation.py" beforeDir="false" afterPath="$PROJECT_DIR$/patch_location/PatchLocation.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/patch_location/export_cfg.py" beforeDir="false" afterPath="$PROJECT_DIR$/patch_location/export_cfg.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/patch_test.py" beforeDir="false" afterPath="$PROJECT_DIR$/patch_test.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/runtime_recorder.py" beforeDir="false" afterPath="$PROJECT_DIR$/runtime_recorder.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/utils.py" beforeDir="false" afterPath="$PROJECT_DIR$/utils.py" afterDir="false" />
     </list>
     <option name="EXCLUDED_CONVERTED_TO_IGNORED" value="true" />
     <option name="SHOW_DIALOG" value="false" />
@@ -37,7 +18,7 @@
   <component name="ProjectLevelVcsManager" settingsEditedManually="true" />
   <component name="PropertiesComponent">
     <property name="WebServerToolWindowFactoryState" value="true" />
-    <property name="last_opened_file_path" value="$PROJECT_DIR$/data" />
+    <property name="last_opened_file_path" value="$PROJECT_DIR$" />
     <property name="settings.editor.selected.configurable" value="com.jetbrains.python.configuration.PyActiveSdkModuleConfigurable" />
   </component>
   <component name="RecentsManager">
@@ -121,7 +102,8 @@
       <option name="presentableId" value="Default" />
       <updated>1614069085462</updated>
       <workItem from="1614069087928" duration="2463000" />
-      <workItem from="1614583875461" duration="13285000" />
+      <workItem from="1614583875461" duration="13544000" />
+      <workItem from="1614908176003" duration="658000" />
     </task>
     <servers />
   </component>
