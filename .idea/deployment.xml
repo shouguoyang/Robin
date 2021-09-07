@@ -16,6 +16,13 @@
           </mappings>
         </serverdata>
       </paths>
+      <paths name="250docker-Asteria">
+        <serverdata>
+          <mappings>
+            <mapping local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
       <paths name="250docker-compileroption">
         <serverdata>
           <mappings>
@@ -23,52 +30,45 @@
           </mappings>
         </serverdata>
       </paths>
-      <paths name="250docker-treelstm">
+      <paths name="Copy of project-level server 'bingo'">
         <serverdata>
           <mappings>
             <mapping local="$PROJECT_DIR$" web="/" />
           </mappings>
         </serverdata>
       </paths>
-      <paths name="Copy of project-level server 'Copy of project-level server 'frp-docker''">
+      <paths name="Robin_remote">
         <serverdata>
           <mappings>
             <mapping local="$PROJECT_DIR$" web="/" />
           </mappings>
         </serverdata>
       </paths>
-      <paths name="Copy of project-level server 'binxray'">
+      <paths name="SAFE">
         <serverdata>
           <mappings>
             <mapping local="$PROJECT_DIR$" web="/" />
           </mappings>
         </serverdata>
       </paths>
-      <paths name="Copy of project-level server 'frp-docker' (1)">
+      <paths name="binxray">
         <serverdata>
           <mappings>
             <mapping local="$PROJECT_DIR$" web="/" />
-          </mappings>
-        </serverdata>
-      </paths>
-      <paths name="Copy of project-level server 'ubuntu@129.211.113.215:5300'">
-        <serverdata>
-          <mappings>
-            <mapping local="$PROJECT_DIR$" web="/" />
-          </mappings>
-        </serverdata>
-      </paths>
-      <paths name="angr@10.10.2.250:2006">
-        <serverdata>
-          <mappings>
-            <mapping deploy="/home/angr/Soter" local="$PROJECT_DIR$" web="/" />
           </mappings>
         </serverdata>
       </paths>
       <paths name="frp-docker">
         <serverdata>
           <mappings>
-            <mapping deploy="/home/angr/Soter" local="$PROJECT_DIR$" />
+            <mapping deploy="/home/angr/Robin" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="root@10.10.2.136:2046">
+        <serverdata>
+          <mappings>
+            <mapping local="$PROJECT_DIR$" web="/" />
           </mappings>
         </serverdata>
       </paths>

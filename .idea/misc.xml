@@ -3,5 +3,5 @@
   <component name="JavaScriptSettings">
     <option name="languageLevel" value="ES6" />
   </component>
-  <component name="ProjectRootManager" version="2" project-jdk-name="Remote Python 3.8.2 (sftp://angr@10.10.2.250:2006/home/angr/.virtualenvs/angr-pip-install/bin/python3)" project-jdk-type="Python SDK" />
+  <component name="ProjectRootManager" version="2" project-jdk-name="Robin_remote" project-jdk-type="Python SDK" />
 </project>
