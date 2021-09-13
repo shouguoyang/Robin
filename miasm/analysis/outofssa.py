@@ -208,7 +208,7 @@ class UnSSADiGraph(object):
 
         @node_a: Varinfo instance
         @node_b: Varinfo instance
-        @parent: Optional parent patch_location of the phi source
+        @parent: Optional parent patch_localization of the phi source
         """
         loc_key_b, index_b = self.var_to_varinfo[node_b].loc_key, self.var_to_varinfo[node_b].index
         if parent and index_b is None:
@@ -237,7 +237,7 @@ class UnSSADiGraph(object):
         Return True if @node_a and @node_b interfere
         @node_a: variable
         @node_b: variable
-        @parent: Optional parent patch_location of the phi source for liveness tests
+        @parent: Optional parent patch_localization of the phi source for liveness tests
 
         Interference check is: is x live at y definition (or reverse)
         TODO: add Value-based interference improvement
@@ -258,7 +258,7 @@ class UnSSADiGraph(object):
 
         @merge_a: a dom ordered list of equivalent variables
         @merge_b: a dom ordered list of equivalent variables
-        @parent: Optional parent patch_location of the phi source for liveness tests
+        @parent: Optional parent patch_localization of the phi source for liveness tests
         """
         if merge_a == merge_b:
             # No need to consider interference if equal
@@ -303,7 +303,7 @@ class UnSSADiGraph(object):
 
         @parallel_copies: a dictionary representing dst/src parallel
         assignments.
-        @parent: Optional parent patch_location of the phi source for liveness tests
+        @parent: Optional parent patch_localization of the phi source for liveness tests
         """
         for dst, src in viewitems(parallel_copies):
             dst_merge = self.merge_state.setdefault(dst, set([dst]))

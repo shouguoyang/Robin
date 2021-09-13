@@ -605,7 +605,7 @@ class DependencyGraph(object):
         irb = self._ircfg.blocks[state.loc_key]
         line_nb = len(irb) if state.line_nb is None else state.line_nb
         #irb,current block ir
-        #line_nb:current instuction patch_location in block
+        #line_nb:current instuction patch_localization in block
         for cur_line_nb, assignblk in reversed(list(enumerate(irb[:line_nb]))):
             #print('\n-----------')
             #print(assignblk)

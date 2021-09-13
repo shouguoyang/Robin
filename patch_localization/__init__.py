@@ -3,9 +3,12 @@
 -------------------------------------------------
    File Name：     __init__.py
    Description :
-   date：          2021/1/9
+   Author :
+   date：          2020/11/15
 -------------------------------------------------
    Change Activity:
-                   2021/1/9:
+                   2020/11/15:
 -------------------------------------------------
 """
+__author__ = 'None'
+from .patch_localization import BlockDiffing, CFGGenerator

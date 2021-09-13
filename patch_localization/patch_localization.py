@@ -1,22 +1,13 @@
 # -*- coding: utf-8 -*-
 """
 -------------------------------------------------
-   File Name：     PatchDiffBlockHashing
-   Description :
-   date：          2020/11/21
--------------------------------------------------
-   Change Activity:
-                   2020/11/21:
--------------------------------------------------
-
-   File Name：   LocatePatchByDiffing
-   Description : given two versions of binary file(e.g. openssl 1.0.1a and openssl 1.0.1b)
+   File Name：     patch_localization.py
+   Description :    given two versions of binary file(e.g. openssl 1.0.1a and openssl 1.0.1b)
                  and the patched function A, this script finds out the patched blocks in functionA
                  in openssl 1.0.1b.
-   Author :       ysg
-   date：          2020/11/15
+   date：          2020/11/21
 -------------------------------------------------
-   Notice: put the export_cfg.py in the same directory with this file!
+    Notice: put the export_cfg.py in the same directory with this file!
 -------------------------------------------------
 """
 import logging, argparse, os, sys, time
@@ -24,14 +15,14 @@ import csv
 import json, math
 import hashlib
 from collections import defaultdict
+
 PROJ_ROOT_DIR = os.path.dirname(os.path.abspath(__file__)) + '/../'
 l = logging.getLogger("CFGDiffer")
-l.setLevel(logging.DEBUG)
-description = "find the error handle"
+l.setLevel(logging.INFO)
+
 
 class BlockDiffing():
     def __init__(self):
-        pass
         self._index_instruction_hash = \
             ['mov', 'push', 'sub', 'or', 'and', 'pop', 'sar', 'retn', 'shl', 'shr', 'inc', 'dec', 'add', 'lea', 'cmp',
              'test', 'jmp', 'call', 'REG', 'ADDR', 'MEMACC', 'CONSTANT', 'num']
@@ -75,6 +66,7 @@ class BlockDiffing():
         cfg_dic['jmp_instruction'] = jmp_ins_dic
 
     def find_end_of_continuous_block(self, unmatched_blocks):
+        # Given multiple basic blocks, find the largest continuous set of these basic blocks in the CFG, and return the deepest basic block among them
         if len(unmatched_blocks) == 1:
             return unmatched_blocks[0]
 
@@ -84,6 +76,7 @@ class BlockDiffing():
         if self.cfg2['entry'] in unmatched_blocks:
             unmatched_blocks.remove(self.cfg2['entry'])
 
+        #  Use union-search set algorithm to mark continuous basic blocks and their depth
         find_union = [[] for i in range(len(unmatched_blocks))]
         for i, node in enumerate(unmatched_blocks):
             for j, node2 in enumerate(unmatched_blocks):
@@ -111,7 +104,7 @@ class BlockDiffing():
         for i in range(len(unmatched_blocks)):
             update_depth(i, [])
 
-        # 标记结束
+        # end of mark
         depth_to_node = defaultdict(list)
         for node in node_depth:
             depth_to_node[node_depth[node]].append(node)
@@ -125,27 +118,31 @@ class BlockDiffing():
         else:
             simis = []
             if max_depth == 0:
-                # if the three blocks are not connected with each other, returns the deepest block node.
+                # If blocks are not adjacent to each other, the basic block with the largest address is returned.
                 return max(unmatched_blocks)
 
+            # Calculate the similarities between nodes that are at same depth degree in cfg2 and nodes in cfg1,
+            # and take block with the minimum similarity
             for node in depth_to_node[max_depth]:
                 node_sim = 0
                 for target_node in self.cfg1['nodes']:
                     node_sim = max(node_sim, self.node_sim(node, target_node))
                 simis.append(node_sim)
+            # find the minimum similarity score
             li = sorted(zip(simis, depth_to_node[max_depth]), key=lambda x: x[0])
             return li[0][1]
 
-    def diff(self, cfg1_file, cfg2_file):
+    def get_all_changed_pairs(self, cfg1_file, cfg2_file):
         '''
-        Locate patch blocks by diffing CFGs.
-        With bucket algorithm.
-        :param cfg1_file: vulnerable
-        :param cfg2_file: patched
-        :return: Return (check_block, patch_block)
+        Compare and diff two cfg files.
+        :return a list of tuple. tuple is formatted [(check_block, guard_block)]
+        :param cfg1_file: vulnerable cfg
+        :param cfg2_file: patch cfg
         '''
-        self.cfg1 = json.load(open(cfg1_file, 'r'))
-        self.cfg2 = json.load(open(cfg2_file, 'r'))
+        with open(cfg1_file, 'r') as f:
+            self.cfg1 = json.load(f)
+        with open(cfg2_file, 'r') as f:
+            self.cfg2 = json.load(f)
         l.debug("[P] patch function size:{}".format(len(list(self.cfg2['nodes'].keys()))))
         self._convert_key_to_int(self.cfg1)
         self._convert_key_to_int(self.cfg2)
@@ -153,7 +150,45 @@ class BlockDiffing():
         self.cfg_hash(self.cfg2)
         self._parent_nodes1 = self._reverse_cfg(self.cfg1)
         self._parent_nodes2 = self._reverse_cfg(self.cfg2)
-        # Calculate the similarity with hashed blocks.
+        # calcuates similarity with hash values
+        mismatched_blocks = self.match_block(self.cfg1, self.cfg2)
+        l.debug("[*] mismatched blocks {}".format([hex(x) for x in mismatched_blocks]))
+        if len(mismatched_blocks) == 0:
+            l.error("Not found mismatched block")
+            return [(0, 0)]
+
+        # if len(mismatched_blocks) == 1:
+        #     # If patch changes the comparison operation such as a>=b -> a>b,
+        #     # there will be only one block changed.
+        #     # the changed block is regarded as check block, and arbitrary child block as guard block.
+        #     check_block = mismatched_blocks[0]
+        #     patch_block = self.cfg2['edges'][check_block][0]
+        #     return [(check_block, patch_block)]
+
+        for check_block in mismatched_blocks:
+            for child in self.cfg2['edges'][check_block]:
+                yield (check_block, child)
+
+
+    def diff(self, cfg1_file, cfg2_file):
+        '''
+        Compare and diff two cfg files.
+        :param cfg1_file: vulnerable cfg
+        :param cfg2_file: patch cfg
+        :return: (check_block, patch_block)
+        '''
+        with open(cfg1_file, 'r') as f:
+            self.cfg1 = json.load(f)
+        with open(cfg2_file, 'r') as f:
+            self.cfg2 = json.load(f)
+        l.debug("[P] patch function size:{}".format(len(list(self.cfg2['nodes'].keys()))))
+        self._convert_key_to_int(self.cfg1)
+        self._convert_key_to_int(self.cfg2)
+        self.cfg_hash(self.cfg1)
+        self.cfg_hash(self.cfg2)
+        self._parent_nodes1 = self._reverse_cfg(self.cfg1)
+        self._parent_nodes2 = self._reverse_cfg(self.cfg2)
+        # calcuates similarity with hash values
         mismatched_blocks = self.match_block(self.cfg1, self.cfg2)
         l.debug("[*] mismatched blocks {}".format([hex(x) for x in mismatched_blocks]))
         if len(mismatched_blocks) == 0:
@@ -161,43 +196,45 @@ class BlockDiffing():
             return 0, 0
 
         if len(mismatched_blocks) == 1:
-            '''When only comparasion operator changes such as "a>=b ->  a>b", there will only one block changes.
-            We use the changed block as check block, and we choose any child node of it as the guard block.
-            '''
+            # If patch changes the comparison operation such as a>=b -> a>b,
+            # there will be only one block changed.
+            # the changed block is regarded as check block, and arbitrary child block as guard block.
             check_block = mismatched_blocks[0]
             patch_block = self.cfg2['edges'][check_block][0]
             return check_block, patch_block
 
-        check_block, patch_block = self.find_error_catch_block(mismatched_blocks)
+        check_block, patch_block = self.find_new_check_patch(mismatched_blocks)
         if check_block != 0:
             return check_block, patch_block
 
         patch_block_addr = self.find_end_of_continuous_block(mismatched_blocks)
-        # If the patched block is the entry of function, we choose any child of it as the patched block.
+        # If the algorithm thinks the entry block is the patched block, then return any successive block of it.
         if patch_block_addr == self.cfg2['entry'] and len(self.cfg2['edges'][patch_block_addr]) > 0:
             patch_block_addr = self.cfg2['edges'][patch_block_addr][0]
 
-
-        #
         error_block_addr = self._error_handle_block(patch_block_addr)
+
+        patch_size = len(self.cfg2['nodes'][patch_block_addr])
+        if error_block_addr is not None:
+            patch_size += len(self.cfg2['nodes'][error_block_addr])
+
+        l.info("Patch Size is {}".format(patch_size))
 
         return patch_block_addr, error_block_addr
 
     def _error_handle_block(self, patch_block_addr):
         '''
-        We try to use patch_block_addr as check block. If the child block with condition 'x==0', then we use it as the guard block.
         :param patch_block_addr:
-        :return: the address of guard block
-        If not found, return None.
         '''
-
+        if patch_block_addr not in self.cfg2['jmp_instruction']:
+            return None
         jmp_instruction = self.cfg2['jmp_instruction'][patch_block_addr]
         jmp_target_s = jmp_instruction.split(" ")[-1]
         jmp_target_s = jmp_target_s.replace("loc_", "")
-        # jmp_instruction='ja      trunc' ,   the target of jmp instruction is symbol.
+        # jmp_instruction='ja      trunc' ,
         jmp_target = 0
         successors = self.cfg2['edges'][patch_block_addr]
-        if len(successors) == 0:#patch block is the return block
+        if len(successors) == 0:  # patch block is the return block
             return patch_block_addr
         try:
             jmp_target = int(jmp_target_s, 16)
@@ -206,37 +243,31 @@ class BlockDiffing():
             jmp_target = 0
 
         null_branch = successors[0]
-        # the branch of condition 0
         if 'jnz' in jmp_instruction:
             if successors[0] == jmp_target:
                 null_branch = successors[1]
         elif 'jz' in jmp_instruction:
             null_branch = jmp_target
 
-        # The branch of condition 0 ends with 'jmp err'.
         if 'jmp' in self.cfg2['jmp_instruction'][null_branch]:
             return null_branch
 
         return None
 
-
-    def find_error_catch_block(self, mismatched_blocks):
+    def find_new_check_patch(self, mismatched_blocks):
         '''
-        :param mismatched_blocks:  changed blocks
-        :return: (check_block, guard_block)
+        :param mismatched_blocks: all changed blocks
+        :return: (check_block, patch_block)
         '''
         for parent in mismatched_blocks:
-            #supposing parent is check block.
             successors = self.cfg2['edges'][parent]
             if len(successors) == 2:
                 child1 = successors[0]
                 child2 = successors[1]
-                # parent is predecessor of "child1" and "child2" from changed blocks.
                 if child1 in mismatched_blocks and child2 in mismatched_blocks:
                     jmp_instruction = self.cfg2['jmp_instruction'][parent]
                     jmp_target_s = jmp_instruction.split(" ")[-1]
                     jmp_target_s = jmp_target_s.replace("loc_", "")
-                    # jmp_instruction='ja      trunc'
                     try:
                         jmp_target = int(jmp_target_s, 16)
                     except ValueError as e:
@@ -244,7 +275,7 @@ class BlockDiffing():
                         jmp_target = 0
 
                     if jmp_target in [child2, child1]:
-                        # Return Null branch
+                        #
                         if 'jnz' in jmp_instruction:
                             if child1 == jmp_target:
                                 jmp_target = child2
@@ -258,7 +289,8 @@ class BlockDiffing():
 
     def match_block(self, cfg1, cfg2):
         '''
-        :return nodes_candidate: all changed blocks
+        Put all the nodes with the same hash value in cfg1 and cfg2 into one bucket, if the nodes in the bucket are even,
+        it means that they match, otherwise return the nodes in cfg2 in the bucket
         '''
         node_hash1 = cfg1['same_hash_nodes'].copy()
         node_hash2 = cfg2['same_hash_nodes'].copy()
@@ -281,8 +313,7 @@ class BlockDiffing():
 
     def node_sim(self, node_addr_in_cfg2, target_addr_in_cfg1):
         '''
-        calculate the similarity of two blocks with context information.
-        :return:
+        To further calculate the similarity between two blocks that hold the same hash value
         '''
 
         def parent_or_child_hashes(node_addr, parent_or_child_dic, hash_dic):
@@ -301,6 +332,7 @@ class BlockDiffing():
                 len(t_child_hashes | n_child_hashes) + 0.1)  # jaccard similarity
 
         return (p_sim + c_sim) / 2
+
     @staticmethod
     def longest_common_subsequence(a, b, element_equal):
         m = [[0 for j in range(len(b) + 1)] for i in range(len(a) + 1)]
@@ -314,8 +346,7 @@ class BlockDiffing():
 
     def node_sim_l2(self, node_addr_in_cfg2, target_addr_in_cfg1):
         '''
-        calculate the similarity of two blocks with context information.
-        :return:
+        To further calculate the similarity between two blocks that hold the same hash value
         '''
 
         def parent_or_child_hashes(node_addr, parent_or_child_dic, hash_dic):
@@ -327,8 +358,7 @@ class BlockDiffing():
         # target_parent_nodes = parent_or_child_hashes(target_addr_in_cfg1, self._parent_nodes1, )
         # detect_parent_nodes = parent_or_child_hashes(node_addr_in_cfg2, self._parent_nodes2, self.cfg2['nodes'])
 
-        # calculate the similarity of parent nodes with LCS
-        # choose the best match
+        # Parent node similarity Use the longest common child sequence
         max_sim = 0
         target_parents = self._parent_nodes1[target_addr_in_cfg1]
         node_parents = self._parent_nodes2[node_addr_in_cfg2]
@@ -337,43 +367,25 @@ class BlockDiffing():
             for detect_parent in node_parents:
                 target_parent_insts = self.cfg1['nodes'][target_parent]
                 detect_parent_insts = self.cfg2['nodes'][detect_parent]
-                lcs_len = self.longest_common_subsequence(target_parent_insts, detect_parent_insts, lambda a,b: a==b)
-                lcs_sim = lcs_len/min(len(target_parent_insts), len(detect_parent_insts)) - (abs(lcs_len - len(target_parent_insts)))/len(target_parent_insts)
+                lcs_len = self.longest_common_subsequence(target_parent_insts, detect_parent_insts, lambda a, b: a == b)
+                lcs_sim = lcs_len / min(len(target_parent_insts), len(detect_parent_insts)) - (
+                    abs(lcs_len - len(target_parent_insts))) / len(target_parent_insts)
                 max_sim = max(max_sim, lcs_sim)
         return max_sim
 
-        # p_sim = (len(target_parent_nodes & detect_parent_nodes) + 0.1) / (
-        #         len(target_parent_nodes | detect_parent_nodes) + 0.1)  # jaccard similarity
-        # t_l2_parent_hashed = set()
-        # n_l2_parent_hashed = set()
-        # for target_parent in self._parent_nodes1[target_addr_in_cfg1]:
-        #     for x in parent_or_child_hashes(target_parent, self._parent_nodes1, self.cfg1['node_hash']):
-        #         t_l2_parent_hashed.add(x)
-        # for node_parent in self._parent_nodes2[node_addr_in_cfg2]:
-        #     for x in parent_or_child_hashes(node_parent, self._parent_nodes2, self.cfg2['node_hash']):
-        #         n_l2_parent_hashed.add(x)
-        # l2_sim = (len(t_l2_parent_hashed & n_l2_parent_hashed) + 0.1) / (
-        #         len(t_l2_parent_hashed | n_l2_parent_hashed) + 0.1)  # jaccard similarity
-        #
-        # t_child_hashes = parent_or_child_hashes(target_addr_in_cfg1, self.cfg1['edges'], self.cfg1['node_hash'])
-        # n_child_hashes = parent_or_child_hashes(node_addr_in_cfg2, self.cfg2['edges'], self.cfg2['node_hash'])
-        # c_sim = (len(t_child_hashes & n_child_hashes) + 0.1) / (
-        #         len(t_child_hashes | n_child_hashes) + 0.1)  # jaccard similarity
-        #
-        # return (p_sim * 0.5 + c_sim * 0.3 + l2_sim * 0.3)
+
 
     def _match_mutiple_blocks(self, nodeaddrs_in_cfg1, nodeaddrs_in_cfg2):
         '''
-        re-calculate the similarity of blocks with the same hashes with context information.
+        If many blocks have the same hash value, we use context information to further distinguish them
         :param nodeaddrs_in_cfg1: list
         :param nodeaddrs_in_cfg2: list
-        Example：CVE-2015-0288,binaries/openssl/O0/openssl-1.0.1l,binaries/openssl/O0/openssl-1.0.1m,X509_to_X509_REQ
-        :return:  changed blocks in cfg2
+        CVE-2015-0288,binaries/openssl/O0/openssl-1.0.1l,binaries/openssl/O0/openssl-1.0.1m,X509_to_X509_REQ
         '''
         unmatched_block_in_cfg2 = set()
         if len(nodeaddrs_in_cfg2) > len(nodeaddrs_in_cfg1):
-            # match two blocks
-            block_pair_similarity = []  # nodeaddrs_in_cfg1 and nodeaddrs_in_cfg2
+            # Pairwise match, return the rest
+            block_pair_similarity = []  # pairwise similarity between nodeaddrs_in_cfg1 and nodeaddrs_in_cfg2
             for node_addr in nodeaddrs_in_cfg2:
                 for target_addr in nodeaddrs_in_cfg1:
                     node_sim = self.node_sim_l2(node_addr, target_addr)
@@ -394,8 +406,6 @@ class BlockDiffing():
     def cfg_hash(self, cfg):
         '''
         hash every block in cfg
-        :param cfg:
-        :return:
         '''
         cfg['node_hash'] = {}
         cfg['same_hash_nodes'] = defaultdict(list)
@@ -408,15 +418,15 @@ class BlockDiffing():
 
     def block_hash(self, block):
         '''
-        hash block
-        :param block: list:
-        :return:
-        jmp : jz jnz ja ...
-        num represents the constants in cmp
+        hash a block
+        :param block: list: instructions in block
+        :return: self._index_instruction_hash
+        jmp includes: jz jnz ja ...
         '''
         m = hashlib.md5()
         m.update("".join(block).encode("utf-8"))
         return m.hexdigest()
+
 
 
 class CFGGenerator():
@@ -427,11 +437,28 @@ class CFGGenerator():
         self._script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "export_cfg.py")
 
     def clear_corrupt_ida_database(self, binary_path):
-        # clear the IDA error file .id0 .id1 .id2
+        # remove files ending with .id0 .id1 .id2 after the ida crashing
         cmd = "rm {}.id0 {}.id1 {}.id2 >/dev/null 2>&1".format(binary_path, binary_path, binary_path)
         os.system(cmd)
 
     def run(self, binary, function_name, force_generation=False):
+
+        if not os.path.isabs(binary):
+            binary = os.path.join(PROJ_ROOT_DIR, binary)
+
+        def is64bit(bin):
+            ret = os.popen('file {}'.format(bin))
+            if 'x86-64' in ret.read():
+                ret.close()
+                return True
+
+            ret.close()
+            return False
+
+        ida = self._ida
+        if is64bit(binary):
+            ida = self._ida + "64"
+
         self._binary = binary
         self._function_name = function_name  # IDA will replace all '.' with '_' in function names
         save_cfg_path = self._binary + "_" + self._function_name + ".idacfg"
@@ -440,32 +467,20 @@ class CFGGenerator():
 
         self.clear_corrupt_ida_database(self._binary)
 
-        cmd = '{}  -A -S"{} {} {}" {}'.format(self._ida, self._script,
-                                              self._function_name, save_cfg_path, self._binary)
+        cmd = '{}  -Lidaerror.log -A -S"{} {} {}" {}'.format(ida, self._script,
+                                                             self._function_name, save_cfg_path, self._binary)
         l.debug("[*] cfg dump: {}".format(cmd))
         res = os.system(cmd)
         if res != 0:
-            raise Exception("'{}' returns {}".format(cmd, res))
+            raise FileNotFoundError("'{}' returns {}".format(cmd, res))
         return save_cfg_path
 
 
 def diff_main(binary1, binary2, function_name: str, force_new=False, ida="/home/angr/idapro-7.5/idat"):
     '''
-    find patch blocks between binary1 and binary2 in function_name
-    function_name : vulnerable function name
-    :param force_new: conduct diffing without cached CFG.
-    :return:
     '''
 
     # function_name = function_name.replace('.', '_')
-    def is64bit(bin):
-        ret = os.popen('file {}'.format(bin))
-        if 'x86-64' in ret.read():
-            return True
-        return False
-
-    if is64bit(binary1):
-        ida = ida + "64"
 
     cg = CFGGenerator(ida)
     cfg1 = cg.run(binary1, function_name, force_new)
@@ -475,45 +490,17 @@ def diff_main(binary1, binary2, function_name: str, force_new=False, ida="/home/
     return node_addrs
 
 
-def patch_test():
-    with open('../data/cve_openssl', 'r') as cvefile:
-        cvereader = csv.reader(cvefile)
-        next(cvereader)
-        N = 0
-        right = 0
-        for cve_entry in cvereader:
-            cveid, patched_bin, vul_bin, func_name, addr = cve_entry
-            binary1 = "../" + vul_bin
-            binary2 = "../" + patched_bin
-            # if cveid != "20162177":
-            #     continue
-            addr = int(addr, 16)
-            if not os.path.exists(binary1) or not os.path.exists(binary1):
-                l.error("binary file not exists")
-                exit(1)
-            l.info("[*] Test {},{},{},{},{}".format(cveid, binary1, binary2, func_name, hex(addr)))
-            check_block, patch_block_addr = diff_main(binary1, binary2, func_name, force_new=False)
-            N += 1
-            if check_block == addr:
-                l.info("[+] Right")
-                right += 1
-            else:
-                l.info("[-] Wrong {}".format(hex(check_block)))
-        l.info("Accuracy: {:f}".format(right / N))
-    exit(0)
-
 
 def one_test():
-
     e = "CVE-2014-0221,/home/angr/PatchDiff/binaries/openssl/O0/openssl-1.0.1g,/home/angr/PatchDiff/binaries/openssl/O0/openssl-1.0.1h,dtls1_get_message_fragment"
 
     s = e.split(',')
     vul_bin = os.path.join(PROJ_ROOT_DIR, s[1])
     patch_bin = os.path.join(PROJ_ROOT_DIR, s[2])
     function_name = s[3]
-    x  = diff_main(vul_bin,
-              patch_bin,
-              function_name=function_name, force_new=False)
+    x = diff_main(vul_bin,
+                  patch_bin,
+                  function_name=function_name, force_new=False)
     print(hex(x[0]))
     if x[1]:
         print(hex(x[1]))
@@ -543,12 +530,12 @@ if __name__ == '__main__':
         l.error("binary file not exists")
         exit(1)
     ida = args.ida
-    #
     l.debug("{} {} {}".format(binary1, binary2, function_name))
     cg = CFGGenerator(ida)
 
     cfg1 = cg.run(binary1, function_name)
     cfg2 = cg.run(binary2, function_name)
+
 
     if args.diff:
         bd = BlockDiffing()

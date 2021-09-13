@@ -719,7 +719,7 @@ class PropagateThroughExprId(object):
 
     def get_var_definitions(self, ssa):
         """
-        Return a dictionary linking variable to its assignment patch_location
+        Return a dictionary linking variable to its assignment patch_localization
         @ssa: SSADiGraph instance
         """
         ircfg = ssa.graph
@@ -739,7 +739,7 @@ class PropagateThroughExprId(object):
         """
         If phi operation has identical source values, return it; else None
         @ssa: SSADiGraph instance
-        @def_dct: dictionary linking variable to its assignment patch_location
+        @def_dct: dictionary linking variable to its assignment patch_localization
         @var: Phi destination variable
         """
         loc_key, index = def_dct[var]
@@ -784,7 +784,7 @@ class PropagateThroughExprId(object):
         """
         Do expression propagation
         @ssa: SSADiGraph instance
-        @head: the head patch_location of the graph
+        @head: the head patch_localization of the graph
         @max_expr_depth: the maximum allowed depth of an expression
         """
         node_to_reg, to_replace, defuse = self.get_candidates(ssa, head, max_expr_depth)
@@ -1496,7 +1496,7 @@ def del_unused_edges(ircfg, heads):
     """
     Delete non accessible edges in the @ircfg graph.
     @ircfg: IRCFG instance in ssa form
-    @heads: patch_location of the heads of the graph
+    @heads: patch_localization of the heads of the graph
     """
 
     deleted_vars = set()

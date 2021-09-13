@@ -68,18 +68,18 @@ def parse_dot_file(dotfile):
 
         label_list = []
         label = label[1:-1].replace('\\\n', '')
-        if label.find('\\n') != -1 and label.find('patch_location:') != -1:
+        if label.find('\\n') != -1 and label.find('patch_localization:') != -1:
             label_list = label.split('\\n')
             #print label_list
             for item in label_list:
                 if item.find('code:') == 0:
                     code = item[5:].replace('\\','')
-                elif item.find('patch_location:') == 0:
+                elif item.find('patch_localization:') == 0:
                     location = item[9:]
                 elif item.find('type') == 0:
                     node_type = item[5:]
             #print 'code', code
-            #print 'patch_location', patch_location
+            #print 'patch_localization', patch_localization
             #print 'node_type', node_type
             #print
 

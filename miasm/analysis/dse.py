@@ -42,7 +42,7 @@ Here are a few remainings TODO:
  - too many memory dependencies in constraint tracking: in order to let z3 find
    new solution, it does need information on memory values (for instance, a
    lookup in a table with a symbolic index). The estimated possible involved
-   memory patch_location could be too large to pass to the solver (threshold named
+   memory patch_localization could be too large to pass to the solver (threshold named
    MAX_MEMORY_INJECT). One possible solution, not yet implemented, is to call
    the solver for reducing the possible values thanks to its accumulated
    constraints.

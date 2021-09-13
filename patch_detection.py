@@ -1,5 +1,5 @@
 '''
-Robin main
+To find a feasible path from function entry to patched blocks with symbolic execution
 '''
 
 import datetime
@@ -10,13 +10,14 @@ import os
 import traceback
 import angr
 import sys
+from PoC_operation import SolvePoC, LoadPoC
 import networkx as nx
-from sklearn.metrics import roc_auc_score
+from taint_tracing import TaintEngine
+# from sklearn.metrics import roc_auc_score
 from Exceptions import StateFileNotExitsException
 from cfg_pruning_with_slice import CFG_PS
 from important_VALUEs import heap_segment_base, stack_segment_base, reg_gs, CALL_WHITE_LIST
 from memory_access_recorder import SimConcretizationStrategyMap
-from preparation_for_detection import PreDetection
 from runtime_recorder import NullPointerDereference
 import csv
 import pickle
@@ -26,13 +27,16 @@ import time
 from utils import get_cve_state_file_path, \
     get_target_binary_trace_file_path, get_target_cve_flag, \
     get_cve_patch_sig_file_path, \
-    get_cve_vul_sig_file_path
+    get_cve_vul_sig_file_path, \
+    get_PoC_file_path, addr_to_func_name, get_shortest_paths_in_graph, \
+    FunctionNotFound
+
+
 rootdir = os.path.dirname(os.path.abspath(__file__))
-LOG_LEVEL = logging.DEBUG
 l = logging.getLogger("patch_detection")
 
-
 from datetime import datetime
+
 
 # reset angr logger
 def mute_angr():
@@ -47,15 +51,15 @@ def mute_angr():
     logging.getLogger("angr.state_plugins.posix").setLevel(logging.ERROR)
     logging.getLogger("angr.engines.successors").setLevel(logging.ERROR)
     logging.getLogger("angr.analyses.cfg.cfg_base").setLevel(logging.ERROR)
+    logging.getLogger('angr.project').setLevel(logging.ERROR)
 
 
 def set_logger_level(log_level):
-    # other loggers
+    # local loggers
     l.setLevel(log_level)
     logging.getLogger("Memory_Access").setLevel(log_level)
     logging.getLogger("RuntimeRecorder").setLevel(log_level)
     logging.getLogger('preparation').setLevel(log_level)
-    logging.getLogger("CFGDiffer").setLevel(log_level)
 
 
 mute_angr()
@@ -63,32 +67,39 @@ mute_angr()
 l.info("=================={}================".format(time.strftime("%Y-%m-%d %H:%M", time.localtime())))
 
 
-class SymExePath():
-    '''given binaries of vul version and patch version, PoC solvong'''
+class Executor():
+    '''generate the signature with given PoC'''
 
     def __init__(self, CVEid, func_name):
         '''
-        :param CVEid: CVE id
-        :param func_name: the vulnerable function
+        :param CVEid:
+        :param patched_bin: binary that contains patched function
+        :param vul_bin:  binary that contains vulnerable function
+        :param func_name: function name
+        :param check_block_addr:
+        :param patch_block_addr:
+        :param saved_file: signature file
+        :param vul_func:
         '''
-        self._path_hash_record = [] # record path hash value
+        self._path_hash_record = []  # to prune execute path
         self.cveid = CVEid
         self.func_name = func_name
-        self.states_found_for_patch = []  #state after execute feasible paths
-        self.CALL_WHITE_LIST = CALL_WHITE_LIST  # functions to step in
-        self.callees_and_rets = {}  # (callsite, func_name): ret_val # record function returns
-        self._stack_segment_base = stack_segment_base #
-        self._heap_segment_base = heap_segment_base #
-        self._reg_gs = reg_gs # global section
+        self.states_found_for_patch = []  # states corresponding feasible paths
+        self.CALL_WHITE_LIST = CALL_WHITE_LIST  # functions to step into rather than fake a return value
+        self.callees_and_rets = {}  # (callsite, func_name): ret_val # function call return values
+        self._stack_segment_base = stack_segment_base  # stack memory address
+        self._heap_segment_base = heap_segment_base  # heap memory address
+        self._reg_gs = reg_gs  # global section
         self.state_file = get_cve_state_file_path(cve_id=CVEid, function_name=func_name)
-        self._loopfinder = None  # from angr
-        self.unsat_block_pairs = []  #
+        self._poc_file = get_PoC_file_path(cve_id=CVEid, function_name=func_name)
+        self._loopfinder = None  #
+        self.unsat_block_pairs = []  # conflict blocks in a path
         self._length_of_shortest_path = 10
         self._patch_func_addr = None  # function address
-        self._program_cfg = None  # program cfg
-        self._function_cfg_graph = None  # cfg of function
+        self._program_cfg = None  # CFG for whole program
+        self._function_cfg_graph = None  # function CFG
         self._path_from_check_to_patch = None
-        self.patch_project = None  # angr project
+        self.patch_project = None  # angr.project
         self._patch_func_size = None
         self._cutoff = None
 
@@ -96,12 +107,12 @@ class SymExePath():
         self._bits = project.arch.bits
         self._arch_name = project.arch.name
         self._memory_endness = project.arch.memory_endness
-        self._byte_width = int(self._bits / 8)  # memory unit width
-        self._target_pic_code = project.loader.main_object.pic  # code PIC
+        self._byte_width = int(self._bits / 8)  # architecture word length
+        self._target_pic_code = project.loader.main_object.pic  # PIC denotes position independent code
 
     def _hook_libc_functions(self, project):
 
-        # libc function hook
+        # default libc function hook
         for import_func_name in project.loader.main_object.plt:
             plt_addr = project.loader.main_object.plt[import_func_name]
             if import_func_name in angr.SIM_PROCEDURES['libc']:
@@ -114,7 +125,6 @@ class SymExePath():
         if 'memset' in project.loader.main_object.plt:
             project.hook_symbol(project.loader.main_object.plt['memset'], memset())
 
-
     def func_name_to_addr(self, p, name):
         '''
         :param p: angr Project
@@ -122,42 +132,33 @@ class SymExePath():
         :return: the address of function symbol, function size
         '''
         # 0000000000066130 l     F .text  0000000000000111        tls1_check_sig_alg.part.10
-        func_sym = p.loader.find_symbol(name) # try fuzzy = True?
+        func_sym = p.loader.find_symbol(name)  # try fuzzy = True?
+        if not func_sym:
+            raise FunctionNotFound('Function name not found in func_name_to_addr')
         return func_sym.rebased_addr, func_sym.size
 
-    def addr_to_func_name(self, p, addr):
-        sym = p.loader.find_symbol(addr)
-        if sym is not None:
-            name = sym.name
-        else:
-            name = p.loader.find_plt_stub_name(addr)
-        if name is not None:
-            return name
-        l.warning("No func name founded by addr {}".format(hex(addr)))
-        return ""
-
-    def _null_pointer_test_and_sig_generation(self, bin_path, func_name, sig_save_path, bound = 30):
+    def _null_pointer_test_and_sig_generation(self, bin_path, func_name, sig_save_path, bound=30,
+                                              poc_file=None,
+                                              NPD=True):
         '''
-        1. vulnerability detection
-        2. record semantic information
-        :param bin_path: binary to be detected
-        :param func_name: function in binary
-        :param sig_save_path: save semantic information
-        :param bound: max loop limitation
-        :return:  if vulnerable, returns True
+        1. Run the target function
+        2. Detect the null pointer dereference during the execution
+        3. Record the signatures during the execution.
+        :param bin_path: path to binary
+        :param func_name: function name
+        :param sig_save_path: the path to save the signatures
+        :param bound: the upper bound of loop
+        :return: True if null pointer dereference occurs
         '''
-        p, to_detect_state, callees_and_rets = self._prepare_running_environment_for_detection(bin_path, func_name)
-        p._acc_seq = []  # memory access sequece
+        p, to_detect_state, callees_and_rets \
+            = self._prepare_running_environment_for_detection(bin_path, func_name, poc_file)
+        p._acc_seq = []  # record the memory access sequences
         # state.options.add(angr.options.CALLLESS)
         sm = p.factory.simgr(to_detect_state, save_unconstrained=True, save_unsat=True)
-        # sm.use_technique(angr.exploration_techniques.LoopSeer(cfg=self._function_cfg_graph, bound=30)) #
-        func_and_ret = []
-        for callsite, callee_func_name in callees_and_rets:
-            func_and_ret.append((callee_func_name, self.callees_and_rets[(callsite, callee_func_name)]))
 
-        runtime_recorder = NullPointerDereference(func_and_ret, p, bound = bound)
-        sm.use_technique(runtime_recorder)
-        l.info("[+] start detection with se in function {} of {}".format(func_name, bin_path))
+        runtime_check = NullPointerDereference(callees_and_rets, p, bound=bound, NPD=NPD)
+        sm.use_technique(runtime_check)
+        l.debug("[+] detection start in function {} of {}".format(func_name, bin_path))
         count = 0
         null_dereference = False
         while len(sm.stashes['active']) > 0 and count < 1000:
@@ -176,41 +177,48 @@ class SymExePath():
                 l.warning("[!] Execution aborted. It is usually caused by unsat state")
                 break
         self.save_mem_acc_seq(p._acc_seq, sig_save_path)
-        self.save_other_features(runtime_recorder, sig_save_path)
+        self.save_other_features(runtime_check, sig_save_path)
+        self.save_taint_argument_sequence(runtime_check, sig_save_path)
         return null_dereference
+
+    def save_taint_argument_sequence(self, runtime_check, sig_save_path):
+        file_name = sig_save_path + ".taint_seqs"
+        with open(file_name, 'w') as f:
+            json.dump(runtime_check.taint_seq, f)
+
+        l.info('taint feature saved in {}'.format(file_name))
 
     def save_other_features(self, recorder, mem_acc_seq_file):
         '''
-        record other features
+        save semantic features
         :param recorder:
         :return:
         '''
         file_name = mem_acc_seq_file + ".others"
-        dic = {'args': recorder._arguments,
-               'arith': recorder._arithmetic_sequence,
-               'cmp_constant': recorder._constants_in_cmp_instruction}
+        dic = {'args': recorder.first_arg_value,
+               'arith': recorder.ariths,
+               'cmp_constant': recorder.cmp_consts}
         with open(file_name, 'w') as f:
             json.dump(dic, f)
 
-        l.debug("[*] other features saved : {}".format(file_name))
+        l.info("[*] other features saved : {}".format(file_name))
 
     def save_mem_acc_seq(self, acc_seq, mem_acc_seq_file):
         '''
-        record memory access addresses
-        :param acc_seq:
+        save memory access
         '''
         tdir = os.path.dirname(mem_acc_seq_file)
         if not os.path.exists(tdir):
             os.mkdir(tdir)
         with open(mem_acc_seq_file, 'w') as f:
             json.dump(acc_seq, f)
-        l.debug("[*] trace file saved : {}".format(mem_acc_seq_file))
+        l.info("[*] trace file saved : {}".format(mem_acc_seq_file))
 
     def get_nodes_from_cfg_by_addrs(self, addrs):
         '''
-        :param cfg_graph: program cfg only!
-        :param addrs: start block address
-        :return: a dic;key is address of block，value is the node of cfg
+        :param cfg_graph: program cfg is preferred
+        :param addrs: instruction address from a block
+        :return: dict: key is block address，value is node class of angr
         '''
         ret_dic = {}
 
@@ -221,7 +229,7 @@ class SymExePath():
         return ret_dic
 
     def _prepare_parameters_and_initilization(self, state):
-        # before function execution
+        # Initialize runtime stack
 
         # X86 : cdecl & fastcall
         def _init_stack(state):
@@ -230,16 +238,14 @@ class SymExePath():
             for i in range(16):
                 state.memory.store(self.arg_addr + self._byte_width * i,
                                    state.solver.BVS('arg_{}'.format(i), self._bits)
-                                   ,endness=state.arch.memory_endness)
-            # fast_call_reg = ['eax', 'edx', 'ecx']
-            # self._set_reg_by_name(state, fast_call_reg[0], state.solver.BVS('arg_0', self._bits))
-            # self._set_reg_by_name(state, fast_call_reg[1], state.solver.BVS('arg_1', self._bits))
-            # self._set_reg_by_name(state, fast_call_reg[2], state.solver.BVS('arg_2', self._bits))
+                                   , endness=state.arch.memory_endness)
+
 
         # X64
-        def _init_regs(state):
+        def _init_regs(state, reg_parameter):
+            '''reg_parameter: register names to pass arguments'''
             # push register
-            reg_parameter = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"]
+
             for i in range(len(reg_parameter)):
                 self._set_reg_by_name(
                     state,
@@ -247,230 +253,217 @@ class SymExePath():
                     state.solver.BVS('arg_{}'.format(i), self._bits)
                 )
             # push stack
-            state.regs.esp = self._stack_segment_base
-            for i in range(10):
+            for i in range(6):
                 state.memory.store(self.arg_addr + self._byte_width * i,
-                                   state.solver.BVS('arg_{}'.format(i+6), self._bits),
+                                   state.solver.BVS('arg_{}'.format(i + len(reg_parameter)), self._bits),
                                    endness=state.arch.memory_endness)
-        state.regs.esp = self._stack_segment_base
-        state.regs.gs = self._reg_gs
+
+        state.regs.sp = self._stack_segment_base
+        state.regs.bp = self._stack_segment_base
 
         if self._arch_name == 'AMD64':
-            _init_regs(state)
+            state.regs.gs = self._reg_gs
+            reg_parameter = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"]
+            _init_regs(state, reg_parameter)
         elif self._arch_name == 'X86':
+            state.regs.gs = self._reg_gs
             _init_stack(state)
+        elif self._arch_name == 'ARMEL':
+            reg_parameter = ["r0", "r1", "r2", "r3"]
+            _init_regs(state, reg_parameter)
         else:
             raise Exception("arch not supported.")
 
-
     def _get_shortest_path(self, func_cfg, program_cfg, source, target, use_program_cfg=False):
         '''
-        :param func_cfg: cfg of functions
-        :param program_cfg: cfg of binary
-        :param source: start address
-        :param target:
-        :param use_program_cfg: whether using program_cfg
-        :return:
+        :param func_cfg: function cfg
+        :param program_cfg:
+        :param source: address of block
+        :param target: address of block
+        :param use_program_cfg: whether to use program cfg
+        :return: [[]]
         '''
         try:
-            return self._find_shortest_paths_in_graph(func_cfg, source, target)
+            return get_shortest_paths_in_graph(self.patch_project, func_cfg, source, target)
         except Exception as e:
             if use_program_cfg:
                 l.warning(
                     "[!] can not calculate shortest path from function cfg, use program cfg instead \n\t {}".format(
                         e.args))
-                return self._find_shortest_paths_in_graph(program_cfg, source, target)
+                return get_shortest_paths_in_graph(self.patch_project, program_cfg, source, target)
             else:
                 raise e
 
-    def _find_shortest_paths_in_graph(self, G, source, target):
-        '''
-        :param source: int: address of start node
-        '''
-        #
-        source_node = None
-        target_node = None
-        if type(G) is angr.analyses.cfg.CFGFast:
-            source_node = G.model.get_node(source)
-            target_node = G.model.get_node(target)
-            G = G.graph
-        else:  # networkx.classes.digraph.DiGraph
-            source_node = self.patch_project.factory.block(source).codenode
-            target_node = self.patch_project.factory.block(target).codenode
-
-        if target_node not in G.nodes:
-            for n in G.nodes:
-                if target_node.addr > n.addr and target_node.addr <= n.addr + n.size:
-                    target_node = n
-                    break
-            else:
-                l.error("[!] Cound not relocation target node {}".format(hex(target_node.addr)))
-
-        if source_node not in G.nodes:
-            for n in G.nodes:
-                if source_node.addr > n.addr and source_node.addr <= n.addr + n.size:
-                    source_node = n
-                    break
-            else:
-                l.error("[!] Cound not relocation sorce node {}".format(hex(source_node.addr)))
-
-        return list(nx.all_shortest_paths(G, source_node, target_node))
-
     def _hash_path(self, path: list):
         '''
-        :param path:
-        :return:
+        :return:hash value of a path
         '''
         x = path[0]
         for y in path[1:]:
             x ^= y
         return x
 
-    def get_state_by_se(self, patch_bin_path, check_addr, patch_addr):
+    def get_state_by_se(self, patch_bin_path, check_addr, patch_addr, patch_bin_project=None):
         '''
+        Just find any feasible path.
+        Run the path and get the state.
         '''
-        l.debug("[*] starting state generating in get_state_by_se")
-        self.patch_project = angr.Project(patch_bin_path,
-                                          auto_load_libs="False")  # patched binary angr project
+        l.debug("[*] finding a feasible path to generate the angr state")
+        if patch_bin_project:
+            self.patch_project = patch_bin_project
+        else:
+            self.patch_project = angr.Project(patch_bin_path,
+                                              auto_load_libs="False")  # patched binary angr project
         function_symbol = self.patch_project.loader.find_symbol(self.func_name)
+        if not function_symbol:
+            l.error("No name {} in symbol".format(self.func_name))
+            return None
+
         self._patch_func_addr = function_symbol.rebased_addr
         self._patch_func_size = function_symbol.size
         self._collect_arch_info(self.patch_project)
         self._hook_libc_functions(self.patch_project)
-        self.arg_addr = self._stack_segment_base + self._byte_width  # address of first argument
+        self.arg_addr = self._stack_segment_base + self._byte_width  # memory address of first argument
         check_addr = check_addr + 0x400000 if self._target_pic_code else check_addr
         if patch_addr is not None:
             patch_addr = patch_addr + 0x400000 if self._target_pic_code else patch_addr
 
         cfg_path = patch_bin_path + ".angr_cfg"
         cfg = None
-        if os.path.exists(cfg_path):
-            cfg = pickle.load(open(cfg_path, 'rb'))
-        else:
+
+        def angr_cfg_gen():
             l.debug("[*] Constructing CFG for {}. It may take long time.".format(patch_bin_path))
             cfg = self.patch_project.analyses.CFGFast()
             # regions=[(self._patch_func_addr, self._patch_func_addr
             #                                     + self._patch_func_size)])
             # dump cfg
             pickle.dump(cfg, open(cfg_path, 'wb'))
+            return cfg
+
+        if os.path.exists(cfg_path):
+            try:
+                cfg = pickle.load(open(cfg_path, 'rb'))
+            except Exception as e:
+                cfg = angr_cfg_gen()
+        else:
+            cfg = angr_cfg_gen()
+
         self._program_cfg = cfg
         # patch_function_instance = cfg.functions[self.func_name] #
-        function_cfg_graph = cfg.functions[self.func_name].graph
+        # Intercept objective function subgraph
+        # Only find the path from the function entry point to the patch block in a single function
+        if self._patch_func_addr not in cfg.functions:
+            l.warning("The function address not in angr.cfg.")
+            return None
+
+        function_cfg_graph = cfg.functions[self._patch_func_addr].graph
         l.debug("[p] function size:{}".format(len(function_cfg_graph.nodes)))
         self._function_cfg_graph = function_cfg_graph
         if patch_addr is not None:
-            path = \
-            list(self._get_shortest_path(function_cfg_graph, cfg, check_addr, patch_addr))[0]
-            path.pop(0)
-            self._path_from_check_to_patch = path
-        l.debug("[*] finding paths from 0x%x To 0x%x" % (self._patch_func_addr, check_addr))
+            # find path from check block to guard block
+            try:
+                path = \
+                    list(self._get_shortest_path(function_cfg_graph, cfg, check_addr, patch_addr))[0]
+                if len(path) > 1:
+                    path.pop(0)  # remove check block address
+                self._path_from_check_to_patch = path
+            except NotImplementedError as e:
+                l.warning(e.args)
+        l.debug("[*] Find paths from 0x%x To 0x%x" % (self._patch_func_addr, check_addr))
         call_state = self.patch_project.factory.call_state(self._patch_func_addr)
         # self.state.inspect.b('address_concretization', angr.BP_BEFORE, action=self.concretization_symbolic_address)
         call_state.options.add(angr.options.SYMBOL_FILL_UNCONSTRAINED_REGISTERS)
         call_state.options.add(angr.options.SYMBOL_FILL_UNCONSTRAINED_MEMORY)
         call_state.options.add(angr.sim_options.LAZY_SOLVES)
-        # self.state.options.add(angr.sim_options.CONSTRAINT_TRACKING_IN_SOLVER) #!!! don't enable. the reason cause invalid dec_ref command
-        # self.state.options.remove(angr.sim_options.COMPOSITE_SOLVER)
+        # self.state.options.add(angr.sim_options.CONSTRAINT_TRACKING_IN_SOLVER) #!!! don't enable. the reason cause
+        # invalid dec_ref command self.state.options.remove(angr.sim_options.COMPOSITE_SOLVER)
         self._prepare_parameters_and_initilization(call_state)
-        # 首先尝试最短路径
-        l.debug("[*] trying the shortest path...\n")
+        l.debug("[*] Try the shortest path...\n")
         try:
-            #
+            # Using the CFG of the entire program to generate the path, nodes outside the function (function call) will be added.
             # paths = list(nx.all_shortest_paths(function_cfg_graph,
             #                                    nodes_dic[self._patch_func_addr], nodes_dic[self._check_block_addr]))
+            t1 = datetime.now()
             paths = self._get_shortest_path(function_cfg_graph, cfg, self._patch_func_addr, check_addr)
             self._cutoff = len(paths[0])
-            if patch_addr is not None:  #
-                for path in paths:
-                    path += self._path_from_check_to_patch
-                    self._cutoff = len(path) * 1.5
+            state = None
+            if self._cutoff > 0:
+                if patch_addr is not None:  # If the patch block address is not empty, add the path to the patch block address to the path
+                    for path in paths:
+                        path += self._path_from_check_to_patch
+                        self._cutoff = len(path) * 1.5
 
-            state = self._get_state_from_paths(call_state, paths, path_limit=10,
-                                               heuristic=True, calibration_time=int(self._cutoff / 4.5))
+                state = self._get_state_from_paths(call_state, paths, path_limit=10,
+                                                   heuristic=True, calibration_time=int(self._cutoff / 4.5))
+                if state is not None:
+                    t2 = datetime.now()
+                    l.debug('[T] State from Shortest Path Time: {:f}'.format((t2 - t1).total_seconds()))
+                    l.debug("[+] state found by shortest paths!")
+                    return state
         except Exception as e:
-            # indirect call e.g. CVE-2014-9656
+            # Challenge: Static analysis cannot get the path from the function entry to the check block. There may be indirect calls e.g. CVE-2014-9656
             l.error("[!] error {}".format(e.args))
             l.error(traceback.format_exc())
             state = None
-
-        if state is not None:
-            l.debug("[+] state found by shortest paths!")
-            return state
-
-        # try to slice CFG and recalculate paths
-        l.debug("[*] trying the sliced path...")
-        cfgps = CFG_PS(patch_bin_path, self._function_cfg_graph, self._patch_func_addr,
-                       check_addr, patch_addr, self.patch_project)
         try:
+            # slice CFG and re-weight the edges in CFG
+            l.debug("[*] Trying the sliced CFG...")
+            if self._target_pic_code:
+                func_addr = self._patch_func_addr - 0x400000
+                check_addr = check_addr - 0x400000
+                patch_addr = patch_addr - 0x400000
+            else:
+                func_addr = self._patch_func_addr
+            t3 = datetime.now()
+            cfgps = CFG_PS(patch_bin_path, self._function_cfg_graph, func_addr,
+                           check_addr, patch_addr, self.patch_project)
             cfgps.do_slicing()
+            t4 = datetime.now()
+            l.debug('[T] Slicing Time: {:f}'.format((t4 - t3).total_seconds()))
             paths = list(cfgps.get_shortest_paths())
-            if patch_addr is not None:  #
+            if patch_addr is not None:  # If the patch block address is not empty, add the path to the patch block address to the path
                 for path in paths:
                     path += self._path_from_check_to_patch
             state = self._get_state_from_paths(call_state, paths, path_limit=10,
                                                heuristic=True, calibration_time=int(self._cutoff / 6 / len(paths)))
 
             if state is not None:
-                l.debug("[+] state found by sliced shortest paths!")
+                t5 = datetime.now()
+                l.debug('[T] Time of sliced shortest path: {:f}'.format((t5 - t4).total_seconds()))
+                l.debug("[+] state is founded by sliced shortest paths!")
                 return state
+            # Try all other paths without loops # cut off means the deepest depth of the generated path
+            l.debug("[*] trying all_simple_paths paths, limit path len:{}\n".format(
+                self._cutoff))
+            t6 = datetime.now()
+            paths = cfgps.get_simple_paths(cutoff=self._cutoff)
+            found = self._get_state_from_paths(call_state, paths,
+                                               path_limit=100, calibration_time=2)
+            if found:
+                t7 = datetime.now()
+                l.debug('[T] Time of sliced simple path: {:f}'.format((t7 - t6).total_seconds()))
+                l.debug("[+] state found by simple paths!")
+                return found
         except Exception as e:
-            l.warning("[-] slicing error: {}".format(e.args))
+            l.warning("[-] slicing error: {}".format(traceback.format_exc()))
+            return None
 
-        l.debug("[*] trying all_simple_paths paths, limit path len:{}\n".format(
-            self._cutoff))
-        paths = cfgps.get_simple_paths(cutoff=self._cutoff)
-        found = self._get_state_from_paths(call_state, paths,
-                                           path_limit=100, calibration_time=2)
-        if found:
-            l.debug("[+] state found by simple paths!")
-            return found
-
-        # l.warning(
-        #     "[!] all simple path failed, try to seek with blind symbolic execution, time consuming")
-        # return self._get_state_without_paths(call_state, nodes_dic[check_block], patch_block)
-
+        # Try fully and blindly symbolic execution
+        l.warning(
+            "[!] all simple path failed, try to seek with blind symbolic execution, time consuming")
+        # return self._get_state_without_paths(call_state, check_addr, patch_addr, step_time_limit=100)
         return None
-
-    def _dfs(self, graph, start_node, end_addr, path_recorder=[], current_depth=0, max_depth=100):
-        '''
-        深度优先寻找从start_addr 到 end_addr 的路径并返回
-        TODO: 1. dfs同时判断循环
-            1.1 通过限制路径长度限制循环次数
-        :param graph: 函数FastCFG对象.graph
-        :param start_node: 开始进行搜索的节点
-        :param end_addr:
-        :param current_depth: 当前搜索深度
-        :param max_depth: 最大搜索深度
-        :param path_recorder: 记录从路径节点的地址
-        :return: list: 从start_addr 到 end_addr 的路径
-        '''
-        current_depth += 1
-        if current_depth > max_depth:
-            return []
-        if start_node.addr == end_addr:
-            yield path_recorder
-        else:
-            succs = list(graph.successors(start_node))
-            random.shuffle(succs)
-            for succ in succs:  #
-                if succ in path_recorder:
-                    continue
-
-                path_recorder.append(start_node)
-                yield from self._dfs(graph, succ, end_addr, path_recorder, current_depth, max_depth)
-                path_recorder.pop()
 
     def _get_all_unreacheable_blocks(self, check_node):
         '''
-        :param check_node:
-        :param patch_addr:
-        :return:
+        :param check_node: address
+        :return:  the set of all nodes that are not reachable to check_node_addr in the function control flow graph.
         '''
         cfg = self._program_cfg.graph
         if check_node not in cfg.nodes:
             raise Exception("check node in not in cfg.nodes")
 
-        reacheable_blocks = []  #
+        reacheable_blocks = []  # Record the addresses of other basic blocks that can reach the patch block
         predecessor_queue = [check_node]
         while len(predecessor_queue) > 0:
             current_node = predecessor_queue.pop(0)
@@ -480,128 +473,39 @@ class SymExePath():
                     reacheable_blocks.append(parentnode.addr)
                     predecessor_queue.append(parentnode)
 
+        # Record all unreachable basic block addresses
         for node in cfg.nodes:
             if node.addr not in reacheable_blocks:
                 yield node
 
-    def _get_state_without_paths(self, init_state, check_node, patch_block, step_time_limit=2000, bound=10):
-        '''
-        blind symbolic execution
-        :param init_state:
-        :param patch_block:
-        :param step_time_limit:
-        :param bound : limitation for loop
-        :return: True if path founded
-        '''
-        # return None
-        avoid_blocks = list(self._get_all_unreacheable_blocks(check_node))
-        simgr = self.patch_project.factory.simgr(
-            init_state)  # veritesting=True  see https://docs.angr.io/core-concepts/pathgroups
-        try:
-            simgr.use_technique(angr.exploration_techniques.LoopSeer(cfg=self._program_cfg, bound=bound))
-            # simgr.use_technique(angr.exploration_techniques.DFS())
-            simgr.use_technique(angr.exploration_techniques.LengthLimiter(max_length=step_time_limit))
-            # simgr.use_technique(angr.exploration_techniques.Spiller())
-            simgr.explore(find=patch_block, avoid=avoid_blocks)
-        except Exception as e:
-            l.error("[-] simgr.explore failed")
-
-        if len(simgr.found) > 0:
-            l.debug("[+] state found by explore!")
-            self.states_found_for_patch.append(simgr.found[0])
-            return simgr.found[0]
-        return None
-
-    def _get_loops(self):
-        '''
-        :return: the angr.analyses.LOOP instances in the function graph
-        '''
-        if self._loopfinder is None:
-            self._loopfinder = self.patch_project.analyses.LoopFinder(
-                functions=(self._program_cfg[self.func_name],))
-        return self._loopfinder.loops
-
-    def try_add_loop_to_path(self, path, repeat=1):
-        '''
-        :param path:
-        :param repeat: times the loop path added
-        :return: new path which may contain loop
-        '''
-
-
-        def replace_loop(path, loop_entry_node_idx, loop, graph):
-            '''
-            replace nodes in the path with a loop
-            :param loop_entry_node: a node in both loop and path, which is regarded as a stitch point
-            :param graph:
-            :return: new path which contains a loop
-            '''
-
-            loop_nodes_in_order = [loop.entry]
-            curr_node = loop.entry
-            circled = False  #
-            while True:
-                tnode = 0
-                for node in graph.successors(curr_node):
-                    tnode = node.addr
-                    if node in loop.body_nodes:
-                        if node == loop.entry:
-                            circled = True
-                        else:
-                            loop_nodes_in_order.append(node)
-                            curr_node = node
-                        break
-                else:  #
-                    l.warning("[!] the successors of node {} are not in loop, break.".
-                              format(hex(tnode)))
-                    return []
-
-                if circled:
-                    break
-
-            new_list = path[:loop_entry_node_idx] + loop_nodes_in_order + path[loop_entry_node_idx:]
-            return new_list
-
-        loops = self._get_loops()
-        loop_entries = {}  #
-        for idx, loop in enumerate(loops):
-            loop_entries[loop.entry.addr] = idx
-        l.debug("[*] find {} loop".format(len(loop_entries)))
-
-
-        for i, node in enumerate(path):
-            if node.addr in loop_entries:
-                idx = loop_entries[node.addr]
-                loop_to_add = loops[idx]
-                yield replace_loop(path.copy(), i, loop_to_add, self._program_cfg.graph)
-        return []
 
     def _get_state_from_paths(self, init_state, paths, path_limit=10000, heuristic=False, calibration_time=1):
         '''
-        symbolic execution for given paths
-        :param init_state: running environment
-        :param paths: paths to be executed
-        :param path_limit: how many paths are executed
-        :param heuristic: whether recalculate paths
-        :return: True if a feasible path is found
+        symbolic execute given paths
+        :param init_state: under constrained runtime environment
+        :param paths: paths that start from function beginning to patch block
+        :param path_limit: maximum number of paths to execute
+        :param heuristic: Whether to continue to recalculate the path from nodes that do not meet the constraints
+        :return: True： Find the feasible path
         '''
 
         path_i = 0
         for path in paths:
-
             if path_limit != -1 and path_i > path_limit:
                 return None
 
+            # Eliminate function calls
             path_address = [p.addr for p in path
                             if self._patch_func_addr <= p.addr <= self._patch_func_addr + self._patch_func_size]
 
-            # remove duplicate paths
+            # Path deduplication
             path_hash = self._hash_path(path_address)
             if path_hash in self._path_hash_record:
                 continue
             else:
                 self._path_hash_record.append(path_hash)
 
+            # Record the shortest path length
             if self._length_of_shortest_path is None:
                 self._length_of_shortest_path = len(path_address)
                 self._cutoff = self._length_of_shortest_path + int(math.log2(self._length_of_shortest_path) * 2)
@@ -617,7 +521,6 @@ class SymExePath():
                     return func_entry_to_check_state
             else:  # if the path is unsatisfied, try to add loop to the path
                 continue
-
 
         return None
 
@@ -635,15 +538,13 @@ class SymExePath():
 
     def _collect_conflict_blocks(self, unsat_state):
         '''
-        :param unsat_state:
+        TODO From the unsatisfied program state, find the basic block address corresponding to the conflict condition and add it to the global variable unsat_block_pairs
         '''
-
         def analysis_conflict_by_data_flow(check_block_addr, run_trace_addrs, des=0):
             '''
 
             '''
             check_block = self.patch_project.factory.block(check_block_addr)
-            # 定位比较指令 cmp, test, xor...
             for ins in reversed(check_block.capstone.insns):
                 if ins.insn.mnemonic in ['cmp', 'test', 'xor']:
                     op0 = ins.insn.operands[0].type
@@ -672,45 +573,40 @@ class SymExePath():
                 l.warning("No cmp instruction in {}?".format(hex(check_block_addr)))
                 return None
 
+            # Retrieve which basic block instruction has assigned mem_access
             for bbl in reversed(run_trace_addrs):
                 block = self.patch_project.factory.block(bbl)
                 for ins in reversed(block.capstone.insns):
-                    if ins.insn.mnemonic in ['mov', 'add', 'sub', 'movzx', 'movsx']:  # 指令是数据转移指令
+                    if ins.insn.mnemonic in ['mov', 'add', 'sub', 'movzx', 'movsx']:  #data transfer
                         if mem_access in ins.insn.op_str.split(',')[des]:
                             return (check_block_addr, bbl)
 
         l.debug("\t[*] !Conflict state: {}".format(hex(unsat_state.addr)))
-        # history_actions = list(unsat_state.history.actions)
-        # try:
-        #     unsat_cons_list = None
-        #     # unsat_cons_list = unsat_state.solver.unsat_core()
-        #     if unsat_cons_list is not None and len(unsat_cons_list) > 0:
-        #         x = [get_constraint_bb_addr(history_actions, c) for c in unsat_cons_list]
-        #         if len(x) == 2:
-        #             self.unsat_block_pairs.append(x)
-        #         elif len(x) > 2:
-        #             self.unsat_block_pairs.append(x[:2])
-        #     else:
-        #         raise Exception("unsat_core is None")
-        # except Exception as e:
-        #     l.debug("UNSAT_CORN {}".format(str(e.args)))
+
         addr_pair = None
         cons = unsat_state.solver.constraints
         if len(cons) > 0 and cons[-1].is_false():
             addr_pair = analysis_conflict_by_data_flow(unsat_state.history.addr, unsat_state.history.bbl_addrs)
         # else:
         #     raise Exception("Z3 unimplemented")
+        #     # find the constraints that conflict with each other
 
         if addr_pair is not None:
             self.unsat_block_pairs.append(addr_pair)
 
     def _run_path(self, start_state, path_address, heuristic=False, calibration_time=10):
         '''
-
+        execute consecutive blocks with symbolic execution
+        :param start_state: initial runtime env
+        :param path_address: sequence of block addresses
+        :param heuristic: Recalculate the path from nodes that do not meet the constraints.
+        :param calibration_time: The number of times to recalculate the path; therefore, there is a loop, so you may not be able to jump out of the loop when you adjust the path.
+        :return: a state for a feasible path, or None
         '''
 
-        end_block_addr = path_address[-1]  # end_block_addr:
+        end_block_addr = path_address[-1]  # end_block_addr: target block address
 
+        # Initialize symbolic memory reification strategy; store the effective memory to a high address to facilitate the detection of null pointer dereference
         sim_strategy = SimConcretizationStrategyMap(self._heap_segment_base, self._heap_segment_base + 0x800000)
         start_state.memory.write_strategies.insert(0, sim_strategy)
         start_state.memory.read_strategies.insert(0, sim_strategy)
@@ -722,38 +618,35 @@ class SymExePath():
         if self._is_contain_conflict_block(path_address):
             l.debug("[!] path contain conflict_block, early stop")
             return None
-        l.debug("[*] Try find state by running path(len:{}):\n\t\t{}".format(len(path_address),
-                                                                             " ".join([hex(p) for p in path_address])))
-        candidate_states = [start_state]  #
+        candidate_states = [start_state]  # state queue to execute
         ret = None
-        while len(candidate_states) > 0:  #
-            state = candidate_states.pop(0)  #
+        while len(candidate_states) > 0:  # queue are not empty
+            state = candidate_states.pop(0)  # pop a state
             addr_to_step = path_address.pop(0)
             if state.addr != addr_to_step:
                 l.error(
                     "\t[!] the address of state {} mismatch with the path, stop the execution".format(hex(state.addr)))
                 break
 
-            l.debug("\t[>]: step in block {} for state generation".format(hex(state.addr)))
-
             if state.addr == end_block_addr:  # arriving at check block
                 ret = state
+                break
             else:
                 try:
                     succ = state.step()
                 except angr.SimMemoryAddressError as e:
                     l.warning('[!] angr.SimMemoryAddressError when concrete symbolic memory address' + str(
-                        e))  #
+                        e))  # Constraint conflict occurs when address is concreted
                     break
                 if len(succ.successors) > 0:
                     for sstate in succ.all_successors:
-                        if sstate.addr == path_address[0]:  #
+                        if sstate.addr == path_address[0]:  # make sure the successive node is in the queue
                             if sstate.satisfiable():
                                 candidate_states.append(sstate)
                                 continue
-                            else:  #
+                            else:  # The selected child node constraints have conflicted
                                 try:
-                                    self._collect_conflict_blocks(sstate)
+                                    # self._collect_conflict_blocks(sstate)
                                     l.debug(
                                         "\t[*] The successor state {} is not satisfiable, early stop.".format(
                                             hex(sstate.addr)))
@@ -764,12 +657,12 @@ class SymExePath():
                         elif sstate.addr < self._patch_func_addr or \
                                 sstate.addr > self._patch_func_addr + self._patch_func_size:
                             '''
-                            , return a fake(symbolic) value and not execution。
+                            For a function call, return a fake(symbolic) value and not step into callee function.
                             '''
-                            called_function_name = self.addr_to_func_name(self.patch_project,
-                                                                          sstate.addr)
+                            called_function_name = addr_to_func_name(self.patch_project,
+                                                                     sstate.addr)
                             new_state = sstate
-                            if called_function_name not in self.CALL_WHITE_LIST:  #
+                            if called_function_name not in self.CALL_WHITE_LIST:  # functions in WHITE_LIST will be executed
                                 new_state = self._fake_function_call(sstate, called_function_name)
                                 candidate_states.append(new_state)
                             else:
@@ -777,7 +670,8 @@ class SymExePath():
                                 candidate_states += succ.successors
 
                     if len(candidate_states) == 0 and heuristic:
-
+                        # when all successive nodes are not in feasible paths
+                        # try another state
                         for source_state in succ.successors:
                             if source_state.satisfiable():
                                 dic = self.get_nodes_from_cfg_by_addrs((source_state.addr, end_block_addr,))
@@ -785,48 +679,56 @@ class SymExePath():
                                                               source_state.addr,
                                                               end_block_addr, times=calibration_time)
 
-
-
                 elif state.block().vex.jumpkind == "Ijk_Call" and \
-                        len(succ.unconstrained_successors) > 0:  # call reg
+                        len(succ.unconstrained_successors) > 0:  # call reg;
                     nstate = succ.unconstrained_successors[0]
                     nstate.ip = nstate.stack_pop()  # imitate ret instruction
+
+                    # construct a fake function return value
                     function_name = 'indirect_call'
                     call_site = state.block().instruction_addrs[-1]
                     self.callees_and_rets[(call_site, function_name)] = None
                     nstate.regs.eax = nstate.solver.BVS(
                         "fake_ret_" + function_name + "_{}".format(hex(call_site)),
-                        32)  #
+                        32)  # eax stores return value
+                    # The return value of some functions may not participate in the condition judgment, and has not been added to the constraint condition,
+                    # so a weak constraint condition is added
                     magic_value = 0xdeadbeef
-                    nstate.add_constraints(nstate.regs.eax != magic_value)  #
+                    nstate.add_constraints(nstate.regs.eax != magic_value)  # add weak constraint
                     candidate_states.append(nstate)
                 else:
                     l.warning("[*] state {} has no successors".format(hex(state.addr)))
         return ret
 
     def _path_calibration(self, interval_state, start_node_addr, end_node_addr, times=1):
+        # Recalculate the path from a certain point that produce infeasible states in the path to the end point
         if times < 1:
             return None
-
         l.debug("[*] Path recalculation from {} to {}".format(hex(start_node_addr), hex(end_node_addr)))
         try:
             paths = self._get_shortest_path(self._function_cfg_graph, self._program_cfg, start_node_addr, end_node_addr)
+            if len(paths[0]) == 0:
+                return None
             return self._get_state_from_paths(interval_state, paths, path_limit=100, heuristic=True,
                                               calibration_time=times - 1)
         except nx.NetworkXNoPath as e:
             l.debug(
                 "[!] NexworkXNoPATH between {} and {} in heuristic search".format(hex(start_node_addr),
                                                                                   hex(end_node_addr)))
+        except NotImplementedError:
+            pass  # node not found in cfg or target node is not reachable
+
         return None
 
     def _fake_function_call(self, state, function_name):
         '''
+        When come across a function call, not step into this function, instead assign a symbolic value to eax.
         :state:
         :param new_pc:
-
+        :return: new state with symbolic eax
         '''
         new_state = state.copy()
-        l.debug("\t[*] faking function call: {}".format(function_name))
+        # l.debug("\t[*] faking function call: {}".format(function_name))
         call_site_block = state.callstack.call_site_addr
         call_site = state.block(addr=call_site_block).instruction_addrs[-1]
         self.callees_and_rets[(call_site, function_name)] = None
@@ -843,50 +745,41 @@ class SymExePath():
         x.append(state.addr)
         return x
 
-    def _find_symbolicAST(self, past):
-        '''
-        '''
-        for ast in past.children_asts():
-            if len(list(ast.children_asts())) == 0 and ast.symbolic:
-                return ast
-            if ast.symbolic:
-                return self._find_symbolicAST(ast)
-
-    def _find_AST_by_name(self, past, name):
-        '''
-        '''
-        for ast in past.recursive_leaf_asts:
-            if ast.shallow_repr() == name:
-                return ast
-
-        return None
-
     def _set_reg_by_name(self, state, reg_name, value):
         reg_number, reg_width = state.arch.registers[reg_name]
         if type(value) is int:
             l.debug("\tReg: {} = {}".format(reg_name, hex(value)))
         state.registers.store(reg_number, value, reg_width)
 
-    def _prepare_running_environment_for_detection(self, to_detect_binary_path, func_name):
+    def _prepare_running_environment_for_detection(self, to_detect_binary_path, func_name, poc_file):
         '''
-
+        Load poc from file, init the running environment
+        :return: state and callees_and_rets. callees_and_rets saves the fake returns of callees
         '''
-        l.info("[*] preparing memory layout for detection >>>")
-        to_detect_project = angr.Project(to_detect_binary_path, auto_load_libs=False)
+        l.debug("[*] preparing memory and register layout for detection ......")
+        if not os.path.exists(to_detect_binary_path):
+            raise FileNotFoundError("File {} not exists".format(to_detect_binary_path))
+        to_detect_project = angr.Project(to_detect_binary_path, auto_load_libs=False, engine=TaintEngine)
         self._collect_arch_info(to_detect_project)
-        self.arg_addr = self._stack_segment_base + self._byte_width  #
+        self.arg_addr = self._stack_segment_base + self._byte_width  # address of first argument
         self._hook_libc_functions(to_detect_project)
         to_detect_state = to_detect_project.factory.call_state(
             addr=self.func_name_to_addr(to_detect_project, func_name)[0])
-        # to_detect_state.options.add(angr.options.FAST_REGISTERS)
-        # to_detect_state.options.add(angr.options.FAST_MEMORY)
-        self._prepare_parameters_and_initilization(to_detect_state)
-        state_found_in_patch = self.states_found_for_patch[0]
-        self.print_constraints()
-        self.callees_and_rets = state_found_in_patch._call_seq
-        constraints_pd = PreDetection(state_found_in_patch, to_detect_state, self.arg_addr, self._arch_name, self.callees_and_rets)
-        callees_and_rest = constraints_pd._callees_and_rets
-        return to_detect_project, to_detect_state, callees_and_rest
+        to_detect_state.options.add(angr.options.ZERO_FILL_UNCONSTRAINED_MEMORY)
+        # to_detect_state.options.add(angr.options.ZERO_FILL_UNCONSTRAINED_REGISTERS)
+        # self._prepare_parameters_and_initilization(to_detect_state)
+        to_detect_state.regs.sp = self._stack_segment_base
+        to_detect_state.regs.bp = self._stack_segment_base
+        # state_found_in_patch = self.states_found_for_patch[0]
+        # self.print_constraints()
+        # self.callees_and_rets = state_found_in_patch._call_seq
+        # constraints_pd = PreDetection(self._poc_file, to_detect_state, self.arg_addr, self._arch_name, self.callees_and_rets)
+        if poc_file:
+            lp = LoadPoC(poc_file, to_detect_state)
+        else:
+            lp = LoadPoC(self._poc_file, to_detect_state)
+        lp.load()
+        return to_detect_project, to_detect_state, lp.callee_rets
 
     def print_constraints(self):
         for state in self.states_found_for_patch:
@@ -901,94 +794,143 @@ class SymExePath():
 
     def _load_state_cache(self):
         '''
+        :return: angr state cache
         '''
         if os.path.exists(self.state_file):
-            state = pickle.load(open(self.state_file, 'rb'))
-            self.states_found_for_patch.append(state)
-            return True
-        return False
+            try:
+                state = pickle.load(open(self.state_file, 'rb'))
+                return state
+            except Exception:
+                pass
+        return None
 
-    def generate_vul_trigger_input_by_patch(self, patch_bin_path, check_addr, patch_addr, forced=False):
+    def _dump_PoC_from_state(self, state, specific_path):
+        '''
+        solve all the constraints from state, and save them to PoC file
+        :param state: A program state which runs from function entry to patch
+        '''
+        t1 = datetime.now()
+        sp = SolvePoC(state, self.callees_and_rets)
+        PoC = sp.solve()
+        t2 = datetime.now()
+        l.debug('[T] Function Input Solving Time (for one input solving): {:f}'.format((t2-t1).total_seconds()))
+        if specific_path:
+            with open(specific_path, 'w') as f:
+                json.dump(PoC, f)
+        else:
+            with open(self._poc_file, 'w') as f:
+                json.dump(PoC, f)
+
+    def input_generation(self, patch_bin_path, check_addr, patch_addr, forced=False, save=None,
+                         patch_bin_project=None):
+        '''
+        to generate an input which drives function execution to check_addr and patch_addr
+        :param forced: force to generate new state and PoC file
+        :param patch_bin_path: patched binary path
+        :param check_addr: address for check block
+        :param patch_addr: address for guard block
+        :param force_generation: force to generate function input
+        :param save: a path to save input file
+        :param patch_bin_project: angr project for patch binary.
+        :return: True if an input is generated.
         '''
 
-        '''
+        if save:  # if specify a function input path, save state file to the same dir
+            self.state_file = save + '.state'
 
-        loaded = self._load_state_cache()
-        if forced or not loaded:
-
-            state = self.get_state_by_se(patch_bin_path, check_addr, patch_addr)
+        state = self._load_state_cache()
+        if forced or not state:
+            t1 = datetime.now()
+            state = self.get_state_by_se(patch_bin_path, check_addr, patch_addr, patch_bin_project=patch_bin_project)
             if state is None:
-                l.error("[-] {} State can not be generated in function {} from {} to {}".format(self.cveid,
-                                                                                                self.func_name,
-                                                                                hex(self._patch_func_addr),
-                                                                                hex(check_addr)))
+                l.error("[-] Input Generation failed")
                 return False
             else:
-                l.debug("[+] state generation is successful. path len:{}".format(len(state.history.bbl_addrs)))
-                pickle.dump(state,
-                            open(self.state_file, 'wb'))
-                return True
+                t2 = datetime.now()
+                l.debug('[T] Patch Block Selection Time (for one selection decision): {:f}'.format((t2 - t1).total_seconds()))
+                l.debug("[+] Input Generation is successful. path len:{}".format(len(state.history.bbl_addrs)))
+                self.dump = pickle.dump(state, open(self.state_file, 'wb'))
 
-        return loaded
+        self._dump_PoC_from_state(state, save)
+        return True
 
-    def sig_gen(self, to_detect_bin, to_detect_func_name, sig_save_path):
+    def sig_gen(self, to_detect_bin, to_detect_func_name, sig_save_path, poc_file=None,
+                NPD=True):
         '''
-
-        :return:
+        :param to_detect_bin: path to binary
+        :param sig_save_path: path to save signatures
+        :param poc_file: path to poc file
+        :param NPD: detect null pointer dereference
+        :return: True if null pointer dereference occurs
         '''
         l.info("[*] start null pointer dereference detection for {} of {} in {}".format(
             to_detect_func_name, self.cveid, to_detect_bin))
-        if not self._load_state_cache():
-            raise StateFileNotExitsException(self.state_file)
         # self.print_constraints()
         t2 = datetime.now()
-        is_vulnerable = self._null_pointer_test_and_sig_generation(to_detect_bin, to_detect_func_name, sig_save_path)
+        # 2. detecte null pointer dereference and record semantic features
+        is_vulnerable = self._null_pointer_test_and_sig_generation(
+            to_detect_bin, to_detect_func_name, sig_save_path, poc_file=poc_file, NPD=NPD)
         t3 = datetime.now()
-        l.debug("[*] Null pointer detection dereference takes {} microseconds".format((t3 - t2).microseconds))
+        l.debug("[*] CVE Signature Generation Time: {:f}".format((t3 - t2).total_seconds()))
         return is_vulnerable
 
-
-def pretty_print_sig(sig):
-    for x in sig:
-        print(x[0], hex(x[1]))
-
-
 def PatchDetection(CVE, target_bin, vul_func_name, supplementary_feature=True, force_new=False,
-                   to_detect_func_name = None):
+                   to_detect_func_name=None, sig=None, poc_file=None):
     '''
-
+    main function for patch detection
+    :param target_bin: target binary to detect
+    :param to_detect_func_name: The name of the function to be detected, the default is None, the same name as the vulnerable function func_name
+    :param vul_func_name: function name in CVE description
+    :param CVE: e.g. 20201234
+    :param sig: what kind of signature to use
+    :param supplementary_feature: bool: Whether to use auxiliary information such as arithmetic operation instruction sequence for auxiliary calculation
+    :param force_new: to force generate new feature of target function
+    :return: float: -1~1 (vul ~ patch)
     '''
     if to_detect_func_name is None:
         to_detect_func_name = vul_func_name
 
-    ttrace_file = get_target_binary_trace_file_path(cve_id=CVE, target_binary=target_bin, function_name=to_detect_func_name)
+    ttrace_file = get_target_binary_trace_file_path(cve_id=CVE, target_binary=target_bin,
+                                                    function_name=to_detect_func_name)
     vul_flag_file = get_target_cve_flag(cve_id=CVE, target_binary=target_bin,
-                                        function_name=to_detect_func_name)  #
+                                        function_name=to_detect_func_name)
+
     '''
+    First determine if there is a null pointer dereference vulnerability
+     If no, then compare by feature
     '''
     if os.path.exists(vul_flag_file) and not force_new:
         return -1
 
     if not os.path.exists(ttrace_file) or force_new:
-        sp = SymExePath(CVEid=CVE, func_name=vul_func_name)
+        sp = Executor(CVEid=CVE, func_name=vul_func_name)
         if sp.sig_gen(target_bin, to_detect_func_name=to_detect_func_name,
-                      sig_save_path = ttrace_file):  #
+                      sig_save_path=ttrace_file,
+                      poc_file=poc_file):
+        # If it is determined that there is a vulnerability, create a special file to mark that the func_name of the binary file is vulnerable to CVE
             if not os.path.exists(vul_flag_file):
                 os.mknod(vul_flag_file)
             return -1
 
     try:
-        sig = "O1" #
-        l.info("[*] signature optimization {}".format(sig))
+        l.debug("[*] signature optimization {}".format(sig))
         patch_trace = get_cve_patch_sig_file_path(CVE, vul_func_name, OPT=sig)
         vul_trace = get_cve_vul_sig_file_path(CVE, vul_func_name, OPT=sig)
-        ptrace = json.load(open(patch_trace, 'r'))
-        vtrace = json.load(open(vul_trace, 'r'))
+
+        if not os.path.exists(patch_trace):
+            raise Exception
+        with open(patch_trace, 'r') as f:
+            ptrace = json.load(f)
+        with open(vul_trace, 'r') as f:
+            vtrace = json.load(f)
     except:
         l.error("signature file of {} loaded failed".format(CVE))
         raise FileNotFoundError()
 
-    ttrace = json.load(open(ttrace_file, 'r'))
+    with open(ttrace_file, 'r') as f:
+        ttrace = json.load(f)
+
+    # ttrace = remove_duplicate_stack_reading(ttrace, window_size = 3)
 
     t_p = longest_common_subsequence(ptrace, ttrace, element_equal)
     t_v = longest_common_subsequence(ttrace, vtrace, element_equal)
@@ -996,35 +938,80 @@ def PatchDetection(CVE, target_bin, vul_func_name, supplementary_feature=True, f
     Np = len(ptrace)
     Nv = len(vtrace)
     Nt = len(ttrace)
-    factor1 = (abs(Nt - Nv) + 1) / (abs(Nt - Np) + 1) #
-    factor2 = (t_p + 1) / (t_v + 1) #
-    factor3 = (abs(t_p - p_v) + 1) / (abs(t_v - p_v) + 1) #
+    factor1 = (abs(Nt - Nv) + 1) / (abs(Nt - Np) + 1)  # (0, N] , when N>1, patched
+    factor2 = (t_p + 1) / (t_v + 1)  # (0, N], when N>1, patched
+    factor3 = (abs(t_p - p_v) + 1) / (abs(t_v - p_v) + 1)  # (0, N], when N>1, patched
     p1 = math.tanh(math.log2(factor1))
     p2 = math.tanh(math.log2(factor2))
     p3 = math.tanh(math.log2(factor3))
-    prob_patched = p1*0.2 + p2*0.8
+    prob_patched = p1 * 0.2 + p2 * 0.8
+    # calculate similarity between other features
     if supplementary_feature:
         supplementary_feature_file = ttrace_file + ".others"
         vul_supple_feature_file = vul_trace + ".others"
         patch_supple_feature_file = patch_trace + ".others"
         try:
-            target_sup_feature = json.load(open(supplementary_feature_file, 'r'))
-            vul_sup_feature = json.load(open(vul_supple_feature_file, 'r'))
-            patch_supple_feature = json.load(open(patch_supple_feature_file, 'r'))
+            with open(supplementary_feature_file, 'r') as f:
+                target_sup_feature = json.load(f)
+            with open(vul_supple_feature_file, 'r') as f:
+                vul_sup_feature = json.load(f)
+            with open(patch_supple_feature_file, 'r') as f:
+                patch_supple_feature = json.load(f)
             sup_t_v = supplementary_feature_sim(target_sup_feature, vul_sup_feature)
             sup_t_p = supplementary_feature_sim(target_sup_feature, patch_supple_feature)
             if sup_t_v == 0:
                 prob_patched_sup = 1
             else:
                 prob_patched_sup = math.tanh(math.log2(sup_t_p / sup_t_v + 0.00000000001))
-            l.debug("[>] mem sim:{:f}, supp sim:{:f}".format(prob_patched, prob_patched_sup))
-            prob_patched = prob_patched * 0.9 + prob_patched_sup * 0.1
+            l.info("[>] mem sim:{:f}, supp sim:{:f}".format(prob_patched, prob_patched_sup))
+
         except FileNotFoundError as e:
+            prob_patched_sup = 0.0
             l.error("Supplementary Feature: file not found {}".format(e.filename))
+
+        # similarity between tainted argument sequences
+        target_tainted_feature_file = ttrace_file + ".taint_seqs"
+        vul_tainted_feature_file = vul_trace + ".taint_seqs"
+        patch_tainted_feature_file = patch_trace + ".taint_seqs"
+        try:
+            with open(target_tainted_feature_file, 'r') as f:
+                ttf = json.load(f)
+            with open(vul_tainted_feature_file, 'r') as f:
+                vtf = json.load(f)
+            with open(patch_tainted_feature_file, 'r') as f:
+                ptf = json.load(f)
+            sim_t_v = tainted_feature_sim(ttf, vtf)
+            sim_t_p = tainted_feature_sim(ttf, ptf)
+            if sim_t_v == 0:
+                prob_patched_taint = 1.0
+            else:
+                prob_patched_taint = math.tanh(math.log2(sim_t_p / sim_t_v + 0.00000000001))
+            l.info("[>] taint sim: {:f}".format(prob_patched_taint))
+        except FileNotFoundError as e:
+            prob_patched_taint = 0.0
+            l.error("Tainted Feature File Missing: {}".format(e.filename))
+        prob_patched = prob_patched * 2.251 + prob_patched_sup * 1.418 + 0.436 * prob_patched_taint + 0.0387
+        prob_patched = (1/(1+math.exp(-prob_patched)) - 0.5) * 2 # Sigmoid function
     return prob_patched
 
 
+def tainted_feature_sim(taint1, taint2):
+    def taint_tags_eq(a: list, b: list):
+        # to determine whether two sets are the same
+        if len(a) != len(b):
+            return False
+        a.sort()
+        b.sort()
+        for i in range(len(a)):
+            if a[i] != b[i]:
+                return False
+        return True
+
+    return longest_common_subsequence(taint1, taint2, taint_tags_eq)
+
+
 def supplementary_feature_sim(supp_dic1: dict, supp_dic2: dict):
+    '''Calculate the similarity of other features'''
     element_sim = lambda x, y: x == y
     args1 = supp_dic1['args']
     args2 = supp_dic2['args']
@@ -1059,39 +1046,94 @@ def longest_common_subsequence(a, b, element_equal):
                 m[ai + 1][bi + 1] = max(m[ai + 1][bi], m[ai][bi + 1])
     return m[len(a)][len(b)]
 
-def input_gen(cveid, patched_bin, func_name, check_addr, patch_addr, force_generation = False):
+
+def input_gen(cveid, patched_bin, func_name, check_addr, patch_addr, force_generation=False):
+    "function input generation for PoC"
     cve_entry = [cveid, patched_bin, func_name, str(check_addr), str(patch_addr)]
     l.debug("[*] Gen Input for {}".format(",".join(cve_entry)))
     patched_bin = os.path.join(rootdir, patched_bin)
-    p_exe = SymExePath(CVEid=cveid, func_name=func_name)
+    p_exe = Executor(CVEid=cveid, func_name=func_name)
     try:
-        p_exe.generate_vul_trigger_input_by_patch(patched_bin, check_addr, patch_addr, forced=force_generation)
+        p_exe.input_generation(patched_bin, check_addr, patch_addr, forced=force_generation)
     except Exception as e:
         l.error(traceback.format_exc())
 
+
+from filter_data import *
+
+# def batch_main():
+#     import csv
+#     # Delete all previously generated signatures of the target function to be tested
+#     # os.system("rm /home/angr/PatchDiff/data/target_sigs/*")
+#     set_logger_level(logging.DEBUG)
+#     l.info("[*] Starting test +++")
+#     with open('./data/detection_optim_O0', 'r') as csvfile:
+#         cvereader = csv.reader(csvfile)
+#         next(cvereader)  # remove header
+#         labels = []
+#         pres = []
+#
+#         for row in cvereader:
+#             if row[0] not in white_list:
+#                 continue
+#             # if row[0]!='20136449':
+#             #     continue
+#
+#             if 'ffmpeg' not in row[1]:
+#                 continue
+#
+#             l.debug("[*] Test for " + ",".join(row))
+#             row[-1] = int(row[-1])
+#             try:
+#                 prob_patch = PatchDetection(*row[:-1])
+#             except AttributeError as e:
+#                 l.error("[*] function not found! {}".format(",".join(row[:-1])))
+#                 l.error(traceback.format_exc())
+#                 continue
+#             labels.append(row[-1])
+#             pres.append(prob_patch)
+#             if (-1 < prob_patch + row[-1] < 1 or prob_patch == 0.0):
+#                 l.error("[-] Prediction Error with prob {:f} || {}".format(prob_patch, str(row)))
+#             else:
+#                 l.error("[+] Prediction Right {:f}".format(prob_patch))
+#         x = [1 if a + b < -1 or a + b >= 1 else 0 for a, b in zip(labels, pres)]
+#         acc = sum(x) / len(x)
+#         l.error("[Result] Total Case {},  ACC:{:f}".format(len(labels), acc))
+
+
 def generate_cve_sig(cveid, vul_bin, patched_bin, func_name, force_generation=False):
     '''
-    PoC input Generation
-    With PoC input fed, execute function and record semantic information.
-    :param force_generation: ignore the cache file
-    :return :
+    generate vulnerability signature
+    :param force_generation: force to regenerate signature
     '''
     l.info(
         "\n[*] Run for {},{},{},{}".format(cveid, vul_bin, patched_bin, func_name))
 
-    p_exe = SymExePath(CVEid=cveid, func_name=func_name)
+    p_exe = Executor(CVEid=cveid, func_name=func_name)
     patched_signature_saved_path = get_cve_patch_sig_file_path(cveid, func_name)
     vul_signature_saved_path = get_cve_vul_sig_file_path(cveid, func_name)
     try:
 
         if force_generation or not os.path.exists(patched_signature_saved_path):
-            p_flag = p_exe.sig_gen(patched_bin,func_name, patched_signature_saved_path)
+            p_flag = p_exe.sig_gen(patched_bin, func_name, patched_signature_saved_path)
         if force_generation or not os.path.exists(vul_signature_saved_path):
             p_exe.sig_gen(vul_bin, func_name, vul_signature_saved_path)
+    except KeyboardInterrupt as e:
+        l.info("[+] White List {}".format(white_list))
+    except FileNotFoundError as e:
+        l.error("PoC file not founded for {}".format(e.filename, cveid))
+
     except Exception as e:
         l.error("[-] Generation Error: {},{},{},{}".format(cveid, vul_bin, patched_bin, func_name))
         l.error(traceback.format_exc())
         return False
     return True
-if __name__ == '__main__':
-    pass
+
+# if __name__ == '__main__':
+#     l.addHandler(logging.FileHandler("patch.log"))
+#     import memory_access_recorder
+#     memory_access_recorder.l.addHandler(logging.FileHandler("patch.log"))
+#     import runtime_recorder
+#     runtime_recorder.l.addHandler(logging.FileHandler("patch.log"))
+#     generate_sigs(force_generation=False)
+# batch_main()

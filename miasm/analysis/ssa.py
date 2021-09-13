@@ -11,7 +11,7 @@ def sanitize_graph_head(ircfg, head):
     In multiple algorithm, the @head of the ircfg may not have predecessors.
     The function transform the @ircfg in order to ensure this property
     @ircfg: IRCFG instance
-    @head: the patch_location of the graph's head
+    @head: the patch_localization of the graph's head
     """
 
     if not ircfg.predecessors(head):
@@ -86,7 +86,7 @@ class SSA(object):
         # dict of SSA expressions
         self.expressions = {}
 
-        # dict of SSA to original patch_location
+        # dict of SSA to original patch_localization
         self.ssa_to_location = {}
 
         # Don't SSA IRDst

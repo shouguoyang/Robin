@@ -420,7 +420,7 @@ def filter_affected2addr(affected):
         temp_dependency=[]
         temp_dependency.extend(affect.dependency)
         #Tracing to [RBP + offset] stops.
-        # 不跟踪常数 
+        # do not trace instance
         if(len(temp_dependency)==1 and isinstance(temp_dependency[0].instr,ExprInt)):
             affect.dependency=set([])
             continue
@@ -428,11 +428,11 @@ def filter_affected2addr(affected):
         for node in affect.dependency:
             # if(isinstance(affect.instr,ExprMem) and  isinstance(node.instr,ExprInt)):
             #     temp_dependency.remove(node)
-            # 如果是常数，则不跟踪，从里面删除。
+            # If it is a constant, it will not be tracked and deleted from it
             if(type(node.instr)==ExprInt):
                 temp_dependency.remove(node)
             
-            #如果是寄存器，且寄存器是不需要跟踪的rbp等，则从里面删除
+            #If it is a register, and the register is rbp, etc. that do not need to be tracked, delete it from it
             if(isinstance(node.instr,ExprId) and node.instr.name in not_track):
                 temp_dependency.remove(node)
             exprmem=re.findall(r'\[.+\],',affect.assembly)
@@ -466,7 +466,7 @@ def filter_affected_exprmem(affected):
         affect.dependency=temp_dependency
 
 def filter_affected(affected):
-    # 这里只处理指令中含有内存的指令地址
+    # Only the address of the instruction containing memory in the instruction is processed here
     filter_affected_exprmem(affected)
     affect_exprem=set()
     for affect in affected:

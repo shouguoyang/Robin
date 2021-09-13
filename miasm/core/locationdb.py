@@ -15,7 +15,7 @@ def is_int(a):
 
 class LocationDB(object):
     """
-    LocationDB is a "database" of information associated to patch_location.
+    LocationDB is a "database" of information associated to patch_localization.
 
     An entry in a LocationDB is uniquely identified with a LocKey.
     Additional information which can be associated with a LocKey are:
@@ -27,16 +27,16 @@ class LocationDB(object):
              1 <-> 0..n  name
 
     >>> loc_db = LocationDB()
-    # Add a patch_location with no additional information
+    # Add a patch_localization with no additional information
     >>> loc_key1 = loc_db.add_location()
-    # Add a patch_location with an offset
+    # Add a patch_localization with an offset
     >>> loc_key2 = loc_db.add_location(offset=0x1234)
-    # Add a patch_location with several names
+    # Add a patch_localization with several names
     >>> loc_key3 = loc_db.add_location(name="first_name")
     >>> loc_db.add_location_name(loc_key3, "second_name")
-    # Associate an offset to an existing patch_location
+    # Associate an offset to an existing patch_localization
     >>> loc_db.set_location_offset(loc_key3, 0x5678)
-    # Remove a name from an existing patch_location
+    # Remove a name from an existing patch_localization
     >>> loc_db.remove_location_name(loc_key3, "second_name")
 
     # Get back offset
@@ -47,7 +47,7 @@ class LocationDB(object):
     >>> loc_db.get_location_offset("first_name")
     0x5678
 
-    # Display a patch_location
+    # Display a patch_localization
     >>> loc_db.pretty_str(loc_key1)
     loc_key_1
     >>> loc_db.pretty_str(loc_key2)
@@ -232,15 +232,15 @@ class LocationDB(object):
             i += 1
 
     def add_location(self, name=None, offset=None, strict=True):
-        """Add a new patch_location in the locationDB. Returns the corresponding LocKey.
-        If @name is set, also associate a name to this new patch_location.
-        If @offset is set, also associate an offset to this new patch_location.
+        """Add a new patch_localization in the locationDB. Returns the corresponding LocKey.
+        If @name is set, also associate a name to this new patch_localization.
+        If @offset is set, also associate an offset to this new patch_localization.
 
         Strict mode (set by @strict, default):
-          If a patch_location with @offset or @name already exists, an error will be
+          If a patch_localization with @offset or @name already exists, an error will be
         raised.
         Otherwise:
-          If a patch_location with @offset or @name already exists, the corresponding
+          If a patch_localization with @offset or @name already exists, the corresponding
         LocKey may be updated and will be returned.
         """
 
@@ -298,7 +298,7 @@ class LocationDB(object):
                 # Offset already known, no name specified
                 return offset_loc_key
 
-        # No collision, this is a brand new patch_location
+        # No collision, this is a brand new patch_localization
         loc_key = LocKey(self._loc_key_num)
         self._loc_key_num += 1
         self._loc_keys.add(loc_key)
@@ -316,7 +316,7 @@ class LocationDB(object):
 
     def remove_location(self, loc_key):
         """
-        Delete the patch_location corresponding to @loc_key
+        Delete the patch_localization corresponding to @loc_key
         @loc_key: LocKey instance
         """
         assert isinstance(loc_key, LocKey)

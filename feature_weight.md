@@ -2,6 +2,7 @@
 Since semantic features CS, AS, and FS can not always be captured, we concatenate them to calculate a score as a part I of overall similarity.
 The semantic feature MS is abundant in target functions so it is calculated as another part (i.e. part II) of similarity.
 
+
 We collect these features by executing target functions with given PoC.
 Then we calculate scores within different part scores between target functions and functions in vulnerability signature.
 After getting these part scores, we need to assign weights to different part scores to calculate an overall similarity.
