@@ -3,26 +3,20 @@ To find a feasible path from function entry to patched blocks with symbolic exec
 '''
 
 import datetime
-import json
 import logging
 import math
 import os
 import traceback
 import angr
-import sys
-from PoC_operation import SolvePoC, LoadPoC
+from MFI_operation import SolvePoC, LoadPoC
 import networkx as nx
 from taint_tracing import TaintEngine
-# from sklearn.metrics import roc_auc_score
 from Exceptions import StateFileNotExitsException
 from cfg_pruning_with_slice import CFG_PS
 from important_VALUEs import heap_segment_base, stack_segment_base, reg_gs, CALL_WHITE_LIST
 from memory_access_recorder import SimConcretizationStrategyMap
 from runtime_recorder import NullPointerDereference
-import csv
 import pickle
-from collections import defaultdict
-import random
 import time
 from utils import get_cve_state_file_path, \
     get_target_binary_trace_file_path, get_target_cve_flag, \

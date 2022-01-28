@@ -8,7 +8,7 @@ from patch_detection import generate_cve_sig
 # Patch Localization & PoC Input Generation & CVE Signature Generation
 # PoC Generation
 def PoC_gen():
-    from PoC_operation.PoC_generation import GeneratePoC
+    from MFI_operation.PoC_generation import GeneratePoC
     cve_info = \
 'CVE-2015-0288,binaries/openssl/O0/openssl-1.0.1l,binaries/openssl/O0/openssl-1.0.1m,X509_to_X509_REQ'
     cveid, vul_bin, patched_bin, func_name = cve_info.split(",")

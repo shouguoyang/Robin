@@ -11,7 +11,7 @@ A patch and vulnerability detection tool.
 
 ## Offline
 
-### CVE Function-level PoC Generation
+### Path Input Building
 
 see function `PoC_gen()` in `patch_test.py`
 
