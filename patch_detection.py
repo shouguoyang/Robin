@@ -1053,48 +1053,6 @@ def input_gen(cveid, patched_bin, func_name, check_addr, patch_addr, force_gener
         l.error(traceback.format_exc())
 
 
-from filter_data import *
-
-# def batch_main():
-#     import csv
-#     # Delete all previously generated signatures of the target function to be tested
-#     # os.system("rm /home/angr/PatchDiff/data/target_sigs/*")
-#     set_logger_level(logging.DEBUG)
-#     l.info("[*] Starting test +++")
-#     with open('./data/detection_optim_O0', 'r') as csvfile:
-#         cvereader = csv.reader(csvfile)
-#         next(cvereader)  # remove header
-#         labels = []
-#         pres = []
-#
-#         for row in cvereader:
-#             if row[0] not in white_list:
-#                 continue
-#             # if row[0]!='20136449':
-#             #     continue
-#
-#             if 'ffmpeg' not in row[1]:
-#                 continue
-#
-#             l.debug("[*] Test for " + ",".join(row))
-#             row[-1] = int(row[-1])
-#             try:
-#                 prob_patch = PatchDetection(*row[:-1])
-#             except AttributeError as e:
-#                 l.error("[*] function not found! {}".format(",".join(row[:-1])))
-#                 l.error(traceback.format_exc())
-#                 continue
-#             labels.append(row[-1])
-#             pres.append(prob_patch)
-#             if (-1 < prob_patch + row[-1] < 1 or prob_patch == 0.0):
-#                 l.error("[-] Prediction Error with prob {:f} || {}".format(prob_patch, str(row)))
-#             else:
-#                 l.error("[+] Prediction Right {:f}".format(prob_patch))
-#         x = [1 if a + b < -1 or a + b >= 1 else 0 for a, b in zip(labels, pres)]
-#         acc = sum(x) / len(x)
-#         l.error("[Result] Total Case {},  ACC:{:f}".format(len(labels), acc))
-
-
 def generate_cve_sig(cveid, vul_bin, patched_bin, func_name, force_generation=False):
     '''
     generate vulnerability signature
@@ -1123,11 +1081,3 @@ def generate_cve_sig(cveid, vul_bin, patched_bin, func_name, force_generation=Fa
         return False
     return True
 
-# if __name__ == '__main__':
-#     l.addHandler(logging.FileHandler("patch.log"))
-#     import memory_access_recorder
-#     memory_access_recorder.l.addHandler(logging.FileHandler("patch.log"))
-#     import runtime_recorder
-#     runtime_recorder.l.addHandler(logging.FileHandler("patch.log"))
-#     generate_sigs(force_generation=False)
-# batch_main()
