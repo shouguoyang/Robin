@@ -14,8 +14,9 @@ import r2pipe
 import json
 import logging
 import traceback
-l = logging.getLogger(__file__)
-l.setLevel(logging.DEBUG)
+from utils import LOG_LEVEL
+l = logging.getLogger("calling_convention")
+l.setLevel(LOG_LEVEL)
 
 # Calling Conventions
 FASTCALL = 'fastcall'
@@ -65,7 +66,7 @@ class CallingConvention2():
         return self._calling_convention_test()
 
     def _calling_convention_test(self, step_limit=10):
-        l.info("[*] calling convention detecting...")
+        l.debug("[*] calling convention detecting...")
         succ = self._to_detect_state.step()
         jmp_target = None
         try:
@@ -105,7 +106,6 @@ class CallingConvention2():
             return FASTCALL
         l.debug("[*] calling convention is: cdecl")
         return CDECL
-
 
 if __name__ == '__main__':
     bin = "binaries/tcpdump/O0/tcpdump-4.9.2"

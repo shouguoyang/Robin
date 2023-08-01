@@ -16,11 +16,12 @@ import logging
 import angr
 import os
 import json
-from important_VALUEs import stack_segment_base, MAX_NUMBER_OF_ARGUMENT
+from running_setting import stack_segment_base, MAX_NUMBER_OF_ARGUMENT
 from taint_tracing import ShadowMemory, taint_memory
+from utils import LOG_LEVEL
 
 l = logging.getLogger('LoadPoC')
-l.setLevel(logging.DEBUG)
+l.setLevel(LOG_LEVEL)
 from .PoC_solve import SolvePoC
 
 

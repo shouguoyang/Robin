@@ -14,7 +14,7 @@ import logging
 import random
 import re
 import time
-from important_VALUEs import dream_argument_value_max, dream_argument_value_min, MAX_NUMBER_OF_ARGUMENT
+from running_setting import dream_argument_value_max, dream_argument_value_min, MAX_NUMBER_OF_ARGUMENT
 from utils import PROJECT_ROOT_DIR
 
 import angr
@@ -24,7 +24,8 @@ fh = logging.FileHandler("{}/logs/SolvePoC.log-{}".format(PROJECT_ROOT_DIR,time.
 format = logging.Formatter("%(asctime)s-%(name)s-%(message)s")
 fh.setFormatter(format)
 l.addHandler(fh)
-l.setLevel(logging.DEBUG)
+from utils import LOG_LEVEL
+l.setLevel(LOG_LEVEL)
 
 
 class SolvePoC():

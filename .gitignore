@@ -1,3 +1,8 @@
 .idea/*
 logs/*
 *.xml
+*.idacfg
+*.sig*
+*__pycache__*
+*.idb
+*.angr_cfg

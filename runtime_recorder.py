@@ -11,13 +11,13 @@ import re
 import angr
 import traceback
 from memory_access_recorder import mem_read_write_monitor
-from important_VALUEs import min_mem_addr_npd, CALL_WHITE_LIST
+from running_setting import min_mem_addr_npd, CALL_WHITE_LIST
 from taint_tracing import NotConcreteError
 from capstone.x86 import *
-from utils import addr_to_func_name
+from utils import addr_to_func_name, LOG_LEVEL
 
 l = logging.getLogger("RuntimeRecorder")
-l.setLevel(logging.DEBUG)
+l.setLevel(LOG_LEVEL)
 
 
 class NullPointerDereference(angr.exploration_techniques.ExplorationTechnique):

@@ -13,11 +13,12 @@ import networkx as nx
 from taint_tracing import TaintEngine
 from Exceptions import StateFileNotExitsException
 from cfg_pruning_with_slice import CFG_PS
-from important_VALUEs import heap_segment_base, stack_segment_base, reg_gs, CALL_WHITE_LIST
+from running_setting import heap_segment_base, stack_segment_base, reg_gs, CALL_WHITE_LIST
 from memory_access_recorder import SimConcretizationStrategyMap
 from runtime_recorder import NullPointerDereference
 import pickle
 import time
+import json
 from utils import get_cve_state_file_path, \
     get_target_binary_trace_file_path, get_target_cve_flag, \
     get_cve_patch_sig_file_path, \
@@ -1053,6 +1054,7 @@ def input_gen(cveid, patched_bin, func_name, check_addr, patch_addr, force_gener
         l.error(traceback.format_exc())
 
 
+
 def generate_cve_sig(cveid, vul_bin, patched_bin, func_name, force_generation=False):
     '''
     generate vulnerability signature
@@ -1081,3 +1083,11 @@ def generate_cve_sig(cveid, vul_bin, patched_bin, func_name, force_generation=Fa
         return False
     return True
 
+# if __name__ == '__main__':
+#     l.addHandler(logging.FileHandler("patch.log"))
+#     import memory_access_recorder
+#     memory_access_recorder.l.addHandler(logging.FileHandler("patch.log"))
+#     import runtime_recorder
+#     runtime_recorder.l.addHandler(logging.FileHandler("patch.log"))
+#     generate_sigs(force_generation=False)
+# batch_main()

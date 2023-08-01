@@ -15,11 +15,15 @@ import logging
 import glob
 import angr
 import networkx as nx
+from pathlib import Path
 
 PROJECT_ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+# PROJECT_ROOT_DIR = Path('/home/angr/PatchDiff')
 TARGET_SIGNATURE_DIR = os.path.join(PROJECT_ROOT_DIR, "./data/target_sigs")  # a dir path to save target function signatures
 CVE_SIGNATURE_DIR = os.path.join(PROJECT_ROOT_DIR, "./data/cve_sigs") # a dir path to save Vulnerability signatures
 CVE_FUNCTION_INPUTS_PATH = os.path.join(PROJECT_ROOT_DIR, "./data/cve_inputs")  #a dir path to save PoC
+
+LOG_LEVEL=logging.INFO
 
 if not os.path.exists(TARGET_SIGNATURE_DIR):
     os.mkdir(TARGET_SIGNATURE_DIR)

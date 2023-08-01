@@ -14,10 +14,11 @@ import angr
 
 import logging
 import traceback
-from important_VALUEs import mem_page_size
+from running_setting import mem_page_size
+from utils import LOG_LEVEL
 
 l = logging.getLogger("Memory_Access")
-l.setLevel(logging.DEBUG)
+l.setLevel(LOG_LEVEL)
 
 
 class SimConcretizationStrategyMap(angr.concretization_strategies.SimConcretizationStrategy):
@@ -48,7 +49,7 @@ class SimConcretizationStrategyMap(angr.concretization_strategies.SimConcretizat
 def mem_read_write_monitor(state):
     '''
     :param state:
-    : monitor memory access
+    : 监测 内存读写
     '''
 
     def ieval(state, bv):

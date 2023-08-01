@@ -13,7 +13,7 @@ import logging
 import angr
 import re
 import random
-from important_VALUEs import dream_argument_value_min, dream_argument_value_max
+from running_setting import dream_argument_value_min, dream_argument_value_max
 
 l = logging.getLogger('preparation')
 l.setLevel(logging.DEBUG)

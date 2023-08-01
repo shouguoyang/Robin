@@ -5,27 +5,60 @@ A patch and vulnerability detection tool.
 # Preparation
 
 1. `pip install -r requirments.txt`.
-2. Install IDA Pro 7.x.
+2. Install IDA Pro 7.x. Assign the path of ida to the variable `ida' in running_setting.py. Make sure the IDA python working well.
 
 # Usage
 
 ## Offline
 
-### Path Input Building
+Please check the help instruction by running `python main.py --help`.
 
-see function `PoC_gen()` in `patch_test.py`
+```
+usage: Patch detection tool. [-h] [--mfi] [--cve_id CVE_ID]
+                             [--path_to_vul_bin PATH_TO_VUL_BIN]
+                             [--path_to_patch_bin PATH_TO_PATCH_BIN]
+                             [--vul_func_name VUL_FUNC_NAME] [--detect]
+                             [--target_bin TARGET_BIN]
+                             [--target_func_name TARGET_FUNC_NAME]
+                             [--debug_mode]
+
+optional arguments:
+  -h, --help            show this help message and exit
+  --mfi                 generate MFI of Vulnerability. Please specify options
+                        of cve_id, path_to_vul_bin, path_to_patch_bin,
+                        vul_func_name
+  --cve_id CVE_ID       CVE ID
+  --path_to_vul_bin PATH_TO_VUL_BIN
+                        path to vulnerable binary
+  --path_to_patch_bin PATH_TO_PATCH_BIN
+                        path to patched binary
+  --vul_func_name VUL_FUNC_NAME
+                        vulnerable/patched function name
+  --detect              detecting patched or vulnerable code within given
+                        target bin. Please specify options of cve_id,
+                        target_bin, vul_func_name
+  --target_bin TARGET_BIN
+  --target_func_name TARGET_FUNC_NAME
+                        The name of target function which may contains patched
+                        or vulnerable code.
+  --debug_mode
+```
+
+### MFI Building
+
+
+
+For example:
+
+`python main.py --mfi --cve_id CVE-2015-0288 --path_to_vul_bin binaries/openssl/O0/openssl-1.0.1l --path_to_patch_bin binaries/openssl/O0/openssl-1.0.1m --vul_func_name X509_to_X509_REQ`
 
 ## Online Detection
 
-see function `patch_test()` in `patch_test.py`
+For example:
 
-```
-INFO    | 2021-03-02 14:22:16,301 | patch_detection | [*] start null pointer dereference detection for X509_to_X509_REQ of CVE-2015-0288 in /home/angr/Soter/binaries/openssl/O0/openssl-1.0.1k
-INFO    | 2021-03-02 14:22:16,468 | patch_detection | [*] preparing memory layout for detection >>>
-INFO    | 2021-03-02 14:22:17,318 | preparation | [*] calling convention detecting...
-INFO    | 2021-03-02 14:22:17,553 | patch_detection | [+] start detection with se in function X509_to_X509_REQ of /home/angr/Soter/binaries/openssl/O0/openssl-1.0.1k
-```
-<span style="color: red; ">` WARNING | 2021-03-02 14:22:22,627 | RuntimeRecorder | Null Pointer Dereference founded at instruction 0x814c1b2: CsInsn 0x814c1b2 [8b400c]: mov eax, dword ptr [eax + 0xc]` </span>
+`python main.py --detect --cve_id CVE-2015-0288 --target_bin binaries/openssl/O0/openssl-1.0.1k --vul_func_name X509_to_X509_REQ`
+
+The output will be:  `Overal Score is: -0.966`
 
 # Dataset
 see `./data/cve_all`

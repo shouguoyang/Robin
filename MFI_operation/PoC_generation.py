@@ -17,7 +17,7 @@ import time
 import os
 import json
 
-from important_VALUEs import ida, TMP_DIR
+from running_setting import ida, TMP_DIR
 from patch_detection import Executor
 from patch_localization import BlockDiffing, CFGGenerator
 from utils import get_PoC_file_path, get_cve_patch_sig_file_path, get_cve_vul_sig_file_path, load_json_data
@@ -26,7 +26,8 @@ from tqdm import tqdm
 from datetime import datetime
 
 log = logging.getLogger("PoC_generation")
-log.setLevel(logging.DEBUG)
+from utils import LOG_LEVEL
+log.setLevel(LOG_LEVEL)
 
 
 class GeneratePoC:
@@ -68,7 +69,7 @@ class GeneratePoC:
 
         self._patch_bin_project = angr.Project(self._patched_bin, auto_load_libs="False")
 
-        log.debug("PoC Generating...")
+        log.info(f"MFI of {self._cve_id} Generating...")
         try:
             self._pick_patch_block()
         except FileNotFoundError as e:
@@ -98,7 +99,7 @@ class GeneratePoC:
         log.debug('[T] Time of Patch Block Identification: {:f}'.format((tb-ta).total_seconds()))
         t_poc = datetime.now()
         PoC_candidate_selection_times = []
-        for (check, guard) in tqdm(changed_blocks, desc=self._cve_id):
+        for (check, guard) in changed_blocks:
             num_pairs += 1
             log.debug("Make a(n) {}th attempt with check {} and guard {}".format(num_pairs, hex(check), hex(guard)))
             if self._input_generation_for_a_pair(check, guard):
