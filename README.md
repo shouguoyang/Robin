@@ -1,8 +1,8 @@
 # Robin
 
-A patch and vulnerability detection tool.
+A patch and vulnerability detection tool for paper "Towards Practical Binary Code Similarity Detection: Vulnerability Verification via Patch Semantic Analysis".
 
-For more details, please see our paper [url](https://dl.acm.org/doi/10.1145/3604608).
+For more details, please refer to our [paper](https://dl.acm.org/doi/10.1145/3604608).
 
 # Preparation
 
